@@ -1,0 +1,81 @@
+# -------------------------------------------------------
+# 1. PV (保持不变，确保指向你的 Filestore IP)
+# -------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-kata-pv
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-kata-manual
+  mountOptions:
+    - nconnect=16
+    - soft
+    - noatime
+    - rsize=262144
+    - wsize=262144
+    - timeo=50
+    - retrans=2
+    - actimeo=3
+    - nodiratime
+    - lookupcache=positive
+  nfs:
+    server: 10.60.10.66
+    path: "/agentdata"
+
+---
+# -------------------------------------------------------
+# 2. PVC (保持不变)
+# -------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-kata-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-kata-manual
+  resources:
+    requests:
+      storage: 1Ti
+  volumeName: nfs-kata-pv
+
+---
+# -------------------------------------------------------
+# 3. 稳健版 FIO Pod
+# -------------------------------------------------------
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fio
+spec:
+  runtimeClassName: kata-clh
+  restartPolicy: Never
+  containers:
+  - name: fio
+    image: xridge/fio:latest
+    securityContext:
+      privileged: true
+    
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2000m"  # 至少 1 核
+      limits:
+        memory: "6Gi" # 给足内存防止 OOM
+        cpu: "3000m"
+
+    volumeMounts:
+    - name: nfs-data
+      mountPath: /data
+    
+    command: ["/bin/sh", "-c", "sleep 3600"]
+
+  volumes:
+  - name: nfs-data
+    persistentVolumeClaim:
+      claimName: nfs-kata-pvc

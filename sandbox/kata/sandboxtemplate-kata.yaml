@@ -1,0 +1,67 @@
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: python-runtime-template-kata-filestore-pvc
+  namespace: default
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: python-sandbox-example
+    spec:
+      runtimeClassName: kata-clh
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: cloud.google.com/gke-nodepool
+                operator: In
+                values:
+                - kata-nodepool
+      containers:
+      - name: python-runtime
+        image: registry.k8s.io/agent-sandbox/python-runtime-sandbox:v0.1.0
+        ports:
+        - containerPort: 8888
+        readinessProbe:
+          httpGet:
+            path: "/"
+            port: 8888
+          initialDelaySeconds: 0
+          periodSeconds: 1
+        volumeMounts:
+        - name: filestore-pvc
+          mountPath: /data
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+            ephemeral-storage: "512Mi"
+      restartPolicy: "OnFailure"
+      volumes:
+      - name: filestore-pvc
+        persistentVolumeClaim:
+          claimName: filestore-pvc-kata
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: python-sandbox-warmpool-kata-filestore-pvc
+  namespace: default
+spec:
+  replicas: 15
+  sandboxTemplateRef:
+    name: python-runtime-template-kata-filestore-pvc
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: filestore-pvc-kata
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: filestore-example 
+  resources:
+    requests:
+      storage: 1Ti

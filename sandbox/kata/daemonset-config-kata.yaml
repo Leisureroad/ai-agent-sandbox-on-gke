@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kata-clh-config-patch
+  namespace: kube-system
+data:
+  configuration-cloud-hypervisor.toml: |
+    [hypervisor.cloud-hypervisor]
+    path = "/opt/kata/bin/cloud-hypervisor"
+    kernel = "/opt/kata/share/kata-containers/vmlinux.container"
+    image = "/opt/kata/share/kata-containers/kata-containers.img"
+    rootfs_type = "ext4"
+    vm_rootfs_driver = "virtio-pmem"
+    shared_fs = "virtio-fs"
+    virtio_fs_daemon = "/opt/kata/libexec/virtiofsd"
+    
+    # 调优参数放置于此
+    virtio_fs_cache_size = 0
+    virtio_fs_extra_args = ["--thread-pool-size=16", "-o", "announce_submounts"]
+    virtio_fs_queue_size = 1024
+    num_queues = 4
+    queue_size = 1024
+    block_device_aio = "io_uring"
+
+    [agent.kata]
+    create_container_timeout = 30
+
+    [runtime]
+    # 修复缺失的 Runtime Name
+    name = "virt_container"
+    hypervisor_name = "cloud-hypervisor"
+    agent_name = "kata"
+    internetworking_model = "tcfilter"
+    sandbox_cgroup_only = true
+    disable_guest_seccomp = true
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kata-config-patcher
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: kata-config-patcher
+  template:
+    metadata:
+      labels:
+        name: kata-config-patcher
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: patcher
+        image: busybox
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          TARGET="/host/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-cloud-hypervisor.toml"
+          NEW_CONF="/config/configuration-cloud-hypervisor.toml"
+          
+          echo "Checking configuration at $TARGET"
+          
+          # 1. 检查并备份原文件
+          if [ ! -f "${TARGET}.bak" ]; then
+            cp "$TARGET" "${TARGET}.bak"
+            echo "Backup created at ${TARGET}.bak"
+          fi
+          
+          # 2. 比较并替换
+          diff "$TARGET" "$NEW_CONF" > /dev/null
+          if [ $? -ne 0 ]; then
+            cp "$NEW_CONF" "$TARGET"
+            echo "Configuration updated with performance tuning."
+            
+            # 3. 强制重启 containerd 以刷新 Runtime 配置
+            echo "Restarting containerd..."
+            nsenter -t 1 -m -u -n -i systemctl restart containerd
+          else
+            echo "Configuration is already up to date."
+          fi
+          
+          sleep 3600
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: kata-path
+          mountPath: /host/opt/kata
+        - name: config-source
+          mountPath: /config
+      volumes:
+      - name: kata-path
+        hostPath:
+          path: /opt/kata
+      - name: config-source
+        configMap:
+          name: kata-clh-config-patch
