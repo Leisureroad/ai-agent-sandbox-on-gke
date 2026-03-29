@@ -1,53 +1,167 @@
-# Deploy Secure AI Sandbox on GKE
+# One-Click Deployment Solution for AI Sandbox on GKE
 
-This guide walks you through deploying the dynamic `agent-sandbox` controller, building the sandbox router, and running tests. It assumes you have already run the Terraform infrastructure provisioning step in the main guide.
-# Deploy Sandbox and Test
+This guide provides a consolidated, seamless process to deploy a secure and isolated AI Sandbox environment on Google Kubernetes Engine (GKE).
 
-## Deploy the Filestore PVC and Sandbox Templates
+## Table of Contents
+1. [Prerequisites](#prerequisites)
+2. [Infrastructure Provisioning via Terraform](#infrastructure-provisioning-via-terraform)
+3. [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway)
+4. [Deployment Scenarios](#deployment-scenarios)
+5. [Teardown (Optional)](#teardown)
+
+---
+
+## Prerequisites
+
+Before executing the deployment, ensure your local environment meets the following conditions:
+
+- **Tools Installed**: `terraform`, `kubectl`, and `gcloud` CLIs are installed and authenticated.
+- **Python Setup**: Python 3.10+ installed locally for testing the sandbox client.
 
 ```bash
-echo "💿 Deploying Storage and Sandbox Templates..."
-kubectl apply -f $ROOT_DIR/sandbox/storageclass.yaml
-kubectl apply -f $ROOT_DIR/sandbox/kata/sandboxtemplate-kata.yaml
-kubectl apply -f $ROOT_DIR/sandbox/gvisor/sandboxtemplate-gvisor.yaml
+# Set your environment variables
+git clone https://gitlab.com/google-cloud-ce/googlers/liufan/ai-agent-on-gke.git
+cd ai-agent-on-gke
+export ROOT_DIR=$(pwd)
+export PROJECT_ID=<YOUR_PROJECT_ID>
+export REGION=us-central1
+export REPO_NAME=ai-sandbox-repo
 ```
 
-## Testing the Sandbox
+---
 
-Once the infrastructure is deployed, you should test the secure sandbox isolation and creation performance using your provided test script `sandboxclient.py`.
+## Infrastructure Provisioning via Terraform
 
-### 1. Install Client Dependencies
+Instead of manually creating a cluster from the UI, we've provided a Terraform manifest inside the `terraform/` directory. This script performs the following critical configurations out-of-the-box:
+- Provisions the required `sandbox-network` VPC for the Filestore integration.
+- Enables **Filestore CSI Support** and sets up the **GKE Gateway API** control plane.
+- Creates two dedicated node pools:
+  - `kata-nodepool`: Optimized for **Kata Containers** (running `n2-standard` with *Nested Virtualization* enabled).
+  - `gvisor-nodepool`: Configured to natively utilize the GKE Sandbox with **gVisor** (`sandbox_type = "gvisor"`).
 
-The test uses the official `agentic-sandbox-client` bindings directly from its repository:
+### Run the Infrastructure Build
+
+Navigate to the terraform directory, adjust your variables if necessary, and execute the build.
 
 ```bash
-# Create a virtual environment (Recommended)
-python3 -m venv venv
-source venv/bin/activate
+# Initialize the Terraform workspace
+cd $ROOT_DIR/terraform
+terraform init
 
-# Install the agentic-sandbox-client and its dependencies
-pip install "git+https://github.com/kubernetes-sigs/agent-sandbox.git@main#subdirectory=clients/python/agentic-sandbox-client"
+# Plan and Apply the infrastructure build
+terraform apply -var="project_id=$PROJECT_ID"
 ```
 
-### 2. Configure Local Authentication
-
-Make sure your local environment has authenticated access to proxy the Kubernetes Gateway API requests, since the Python client will proxy commands into the cluster.
+Once Terraform completes its run, fetch the credentials so `kubectl` can route the application manifests:
 
 ```bash
-# Authenticate your default credentials and gcloud identity
-gcloud auth login
-gcloud auth application-default login
+# Fetch credentials for the newly created cluster
 gcloud container clusters get-credentials ai-sandbox-cluster --region us-central1 --project <YOUR_PROJECT_ID>
 ```
 
-### 3. Run the Client Test
+```bash
+# Install Kata Containers
+export VERSION=$(curl -sSL https://api.github.com/repos/kata-containers/kata-containers/releases/latest | jq .tag_name | tr -d '"')
+export CHART="oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy"
 
-Execute your testing script. This will use a `ThreadPoolExecutor` to spin up 5 parallel sandbox claims and verify their isolation using the `df -Th` command inside the container.
+helm install kata-deploy "${CHART}" --version "${VERSION}"
+
+# See everything you can configure
+helm show values "${CHART}" --version "${VERSION}"
+```
+---
+
+## Build Sandbox Router & Deploy Gateway
+
+Before running the deployment script, you'll need to build and push the Sandbox Router Docker image to your container registry. The Sandbox Router acts as a central entry point for all sandbox traffic, routing requests dynamically to the correct sandbox.
+
+### 1. Build the Sandbox Router Image
+
+Before building the image, create an Artifact Registry repository to host it, and configure Docker to authenticate with the registry:
 
 ```bash
-python $ROOT_DIR/sandbox/gvisor/sandboxclient-gvisor.py
-python $ROOT_DIR/sandbox/kata/sandboxclient-kata.py
+# Create the Artifact Registry repository
+gcloud artifacts repositories create $REPO_NAME \
+  --repository-format=docker \
+  --location=$REGION \
+  --description="Docker repository for AI Sandbox images"
+
+# Authenticate Docker with Artifact Registry
+gcloud auth configure-docker ${REGION}-docker.pkg.dev
+
+# Navigate to the Sandbox Router source directory
+cd $ROOT_DIR
+git clone https://github.com/kubernetes-sigs/agent-sandbox.git
+cd agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/
+
+# Build and push the image using Cloud Build
+export SANDBOX_ROUTER_IMG=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/sandbox-router:latest
+gcloud builds submit --tag $SANDBOX_ROUTER_IMG .
 ```
 
-**Expected Output**:
-You will see logging indicating the time taken to claim and initialize the sandboxes, followed by the storage mounted (including the `/data` Filestore mount) outputted from the `df -Th` execution securely within the `kata-clh` hypervisor. This verifies that your 20-replica warm pool gracefully handles immediate concurrent requests.
+### 2. Deploy the Sandbox Router and Gateway
+
+Save the following routine as a deployment script (e.g., `deploy.sh`), or directly copy and run it in your terminal. This script will automatically install the sandbox infrastructure, set up persistent volumes via Filestore, establish the network sandbox router and gateway, and prepare the warm pool instances.
+
+```bash
+#!/bin/bash
+set -e
+
+# Ensure SANDBOX_ROUTER_IMG is set
+if [ -z "$SANDBOX_ROUTER_IMG" ]; then
+  echo "Error: SANDBOX_ROUTER_IMG environment variable is not set."
+  echo "Please set it before deploying: export SANDBOX_ROUTER_IMG=<your_registry_path>/sandbox-router:latest"
+  exit 1
+fi
+
+echo "🚀 Starting AI Sandbox One-Click Deployment on GKE..."
+
+# 1. Deploy the Agent Sandbox Controller and Extensions
+echo "📦 Deploying Agent Sandbox Controller & CRDs..."
+kubectl apply \
+  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/manifest.yaml \
+  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/extensions.yaml
+
+# Wait for sandbox webhooks/controllers to be successfully established
+echo "⏳ Waiting for Agent Sandbox Webhooks to become available..."
+sleep 15
+kubectl wait --for=condition=Ready=True pod --all -n agent-sandbox-system --timeout=120s  || true
+
+# 2. Deploy the Sandbox Router and Gateway
+echo "🔄 Deploying Sandbox Router..."
+sed -i "" "s|IMAGE_PLACEHOLDER|${SANDBOX_ROUTER_IMG}|g" "$ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml"
+kubectl apply -f $ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml
+
+echo "🌐 Deploying Gateway Networking (gateway.yaml)..."
+kubectl apply -f $ROOT_DIR/sandbox/gateway.yaml
+
+echo "✅ Deployment manifests applied successfully!"
+echo "Note: The Gateway and warm pool instances may take a few minutes to fully provision."
+```
+
+---
+
+## Deployment Scenarios
+
+Now that your underlying GKE cluster and node pools are provisioned, you have two options for what to deploy:
+
+### 1. Agent Sandbox on GKE
+Deploy a massively scalable, isolated, multi-tenant execution environment where dynamic sandboxes are claimed on demand.
+
+👉 **[Proceed to the Sandbox Deployment Guide](./sandbox/README.MD)**
+
+### 2. Hosted OpenClaw on GKE
+Deploy OpenClaw natively on highly isolated hardware (like Kata/gVisor), giving you a secure, permanent LLM Gateway and agent execution interface.
+
+👉 **[Proceed to the OpenClaw Deployment Guide](./openclaw/README.MD)**
+
+---
+
+## Teardown (Cleanup)
+
+To remove all the resources created during this tutorial and avoid any billing charges, run the following cleanup commands:
+
+```bash
+cd $ROOT_DIR/terraform
+terraform destroy
+```
