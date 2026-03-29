@@ -14,11 +14,9 @@ kubectl apply -f $ROOT_DIR/sandbox/gvisor/sandboxtemplate-gvisor.yaml
 
 ## Testing the Sandbox
 
-Once the infrastructure is deployed, you should test the secure sandbox isolation and creation performance using your provided test script `sandboxclient.py`.
+Once the infrastructure is deployed, you can test the secure sandbox isolation and creation performance using test script `sandboxclient.py`.
 
 ### 1. Install Client Dependencies
-
-The test uses the official `agentic-sandbox-client` bindings directly from its repository:
 
 ```bash
 # Create a virtual environment (Recommended)
@@ -42,12 +40,15 @@ gcloud container clusters get-credentials ai-sandbox-cluster --region us-central
 
 ### 3. Run the Client Test
 
-Execute your testing script. This will use a `ThreadPoolExecutor` to spin up 5 parallel sandbox claims and verify their isolation using the `df -Th` command inside the container.
+Execute your testing script. This will use a `ThreadPoolExecutor` to spin up parallel sandbox claims and verify their isolation using the `df -Th` command inside the container and test the sandbox cold start lantency.
 
 ```bash
+# execute gvisor sandbox test
 python $ROOT_DIR/sandbox/gvisor/sandboxclient-gvisor.py
+
+# execute kata sandbox test
 python $ROOT_DIR/sandbox/kata/sandboxclient-kata.py
 ```
 
 **Expected Output**:
-You will see logging indicating the time taken to claim and initialize the sandboxes, followed by the storage mounted (including the `/data` Filestore mount) outputted from the `df -Th` execution securely within the `kata-clh` hypervisor. This verifies that your 20-replica warm pool gracefully handles immediate concurrent requests.
+You will see logging indicating the time taken to claim and initialize the sandboxes, followed by the storage mounted (including the `/data` Filestore mount) outputted from the `df -Th` execution securely within the `kata-clh` hypervisor. This verifies that your replicas warm pool gracefully handles immediate concurrent requests.

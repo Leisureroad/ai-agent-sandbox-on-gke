@@ -1,4 +1,4 @@
-# One-Click Deployment Solution for AI Sandbox on GKE
+# AI Sandbox Deployment Solution on GKE
 
 This guide provides a consolidated, seamless process to deploy a secure and isolated AI Sandbox environment on Google Kubernetes Engine (GKE).
 
@@ -7,7 +7,7 @@ This guide provides a consolidated, seamless process to deploy a secure and isol
 2. [Infrastructure Provisioning via Terraform](#infrastructure-provisioning-via-terraform)
 3. [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway)
 4. [Deployment Scenarios](#deployment-scenarios)
-5. [Teardown (Optional)](#teardown)
+5. [Cleanup](#cleanup)
 
 ---
 
@@ -33,7 +33,7 @@ export REPO_NAME=ai-sandbox-repo
 ## Infrastructure Provisioning via Terraform
 
 Instead of manually creating a cluster from the UI, we've provided a Terraform manifest inside the `terraform/` directory. This script performs the following critical configurations out-of-the-box:
-- Provisions the required `sandbox-network` VPC for the Filestore integration.
+- Provisions the required VPC for the Filestore integration.
 - Enables **Filestore CSI Support** and sets up the **GKE Gateway API** control plane.
 - Creates two dedicated node pools:
   - `kata-nodepool`: Optimized for **Kata Containers** (running `n2-standard` with *Nested Virtualization* enabled).
@@ -60,7 +60,7 @@ gcloud container clusters get-credentials ai-sandbox-cluster --region us-central
 ```
 
 ```bash
-# Install Kata Containers
+# Install Kata Container Support
 export VERSION=$(curl -sSL https://api.github.com/repos/kata-containers/kata-containers/releases/latest | jq .tag_name | tr -d '"')
 export CHART="oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy"
 
@@ -104,17 +104,6 @@ gcloud builds submit --tag $SANDBOX_ROUTER_IMG .
 Save the following routine as a deployment script (e.g., `deploy.sh`), or directly copy and run it in your terminal. This script will automatically install the sandbox infrastructure, set up persistent volumes via Filestore, establish the network sandbox router and gateway, and prepare the warm pool instances.
 
 ```bash
-#!/bin/bash
-set -e
-
-# Ensure SANDBOX_ROUTER_IMG is set
-if [ -z "$SANDBOX_ROUTER_IMG" ]; then
-  echo "Error: SANDBOX_ROUTER_IMG environment variable is not set."
-  echo "Please set it before deploying: export SANDBOX_ROUTER_IMG=<your_registry_path>/sandbox-router:latest"
-  exit 1
-fi
-
-echo "🚀 Starting AI Sandbox One-Click Deployment on GKE..."
 
 # 1. Deploy the Agent Sandbox Controller and Extensions
 echo "📦 Deploying Agent Sandbox Controller & CRDs..."
@@ -135,8 +124,6 @@ kubectl apply -f $ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/s
 echo "🌐 Deploying Gateway Networking (gateway.yaml)..."
 kubectl apply -f $ROOT_DIR/sandbox/gateway.yaml
 
-echo "✅ Deployment manifests applied successfully!"
-echo "Note: The Gateway and warm pool instances may take a few minutes to fully provision."
 ```
 
 ---
@@ -157,7 +144,7 @@ Deploy OpenClaw natively on highly isolated hardware (like Kata/gVisor), giving 
 
 ---
 
-## Teardown (Cleanup)
+## Cleanup
 
 To remove all the resources created during this tutorial and avoid any billing charges, run the following cleanup commands:
 

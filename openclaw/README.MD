@@ -1,4 +1,4 @@
-# One-Click Deployment Solution for Hosted OpenClaw on GKE
+# Hosted OpenClaw Deployment Solution on GKE
 
 This guide provides a consolidated, seamless process to deploy a secure and isolated AI Sandbox environment on Google Kubernetes Engine (GKE).
 
