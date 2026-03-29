@@ -1,93 +1,167 @@
-# ai-agent-on-gke
+# One-Click Deployment Solution for AI Sandbox on GKE
 
+This guide provides a consolidated, seamless process to deploy a secure and isolated AI Sandbox environment on Google Kubernetes Engine (GKE).
 
+## Table of Contents
+1. [Prerequisites](#prerequisites)
+2. [Infrastructure Provisioning via Terraform](#infrastructure-provisioning-via-terraform)
+3. [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway)
+4. [Deployment Scenarios](#deployment-scenarios)
+5. [Teardown (Optional)](#teardown)
 
-## Getting started
+---
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Prerequisites
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+Before executing the deployment, ensure your local environment meets the following conditions:
 
-## Add your files
+- **Tools Installed**: `terraform`, `kubectl`, and `gcloud` CLIs are installed and authenticated.
+- **Python Setup**: Python 3.10+ installed locally for testing the sandbox client.
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
+```bash
+# Set your environment variables
+git clone https://gitlab.com/google-cloud-ce/googlers/liufan/ai-agent-on-gke.git
+cd ai-agent-on-gke
+export ROOT_DIR=$(pwd)
+export PROJECT_ID=<YOUR_PROJECT_ID>
+export REGION=us-central1
+export REPO_NAME=ai-sandbox-repo
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/google-cloud-ce/googlers/liufan/ai-agent-on-gke.git
-git branch -M main
-git push -uf origin main
+
+---
+
+## Infrastructure Provisioning via Terraform
+
+Instead of manually creating a cluster from the UI, we've provided a Terraform manifest inside the `terraform/` directory. This script performs the following critical configurations out-of-the-box:
+- Provisions the required `sandbox-network` VPC for the Filestore integration.
+- Enables **Filestore CSI Support** and sets up the **GKE Gateway API** control plane.
+- Creates two dedicated node pools:
+  - `kata-nodepool`: Optimized for **Kata Containers** (running `n2-standard` with *Nested Virtualization* enabled).
+  - `gvisor-nodepool`: Configured to natively utilize the GKE Sandbox with **gVisor** (`sandbox_type = "gvisor"`).
+
+### Run the Infrastructure Build
+
+Navigate to the terraform directory, adjust your variables if necessary, and execute the build.
+
+```bash
+# Initialize the Terraform workspace
+cd $ROOT_DIR/terraform
+terraform init
+
+# Plan and Apply the infrastructure build
+terraform apply -var="project_id=$PROJECT_ID"
 ```
 
-## Integrate with your tools
+Once Terraform completes its run, fetch the credentials so `kubectl` can route the application manifests:
 
-* [Set up project integrations](https://gitlab.com/google-cloud-ce/googlers/liufan/ai-agent-on-gke/-/settings/integrations)
+```bash
+# Fetch credentials for the newly created cluster
+gcloud container clusters get-credentials ai-sandbox-cluster --region us-central1 --project <YOUR_PROJECT_ID>
+```
 
-## Collaborate with your team
+```bash
+# Install Kata Containers
+export VERSION=$(curl -sSL https://api.github.com/repos/kata-containers/kata-containers/releases/latest | jq .tag_name | tr -d '"')
+export CHART="oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy"
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+helm install kata-deploy "${CHART}" --version "${VERSION}"
 
-## Test and Deploy
+# See everything you can configure
+helm show values "${CHART}" --version "${VERSION}"
+```
+---
 
-Use the built-in continuous integration in GitLab.
+## Build Sandbox Router & Deploy Gateway
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Before running the deployment script, you'll need to build and push the Sandbox Router Docker image to your container registry. The Sandbox Router acts as a central entry point for all sandbox traffic, routing requests dynamically to the correct sandbox.
 
-***
+### 1. Build the Sandbox Router Image
 
-# Editing this README
+Before building the image, create an Artifact Registry repository to host it, and configure Docker to authenticate with the registry:
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```bash
+# Create the Artifact Registry repository
+gcloud artifacts repositories create $REPO_NAME \
+  --repository-format=docker \
+  --location=$REGION \
+  --description="Docker repository for AI Sandbox images"
 
-## Suggestions for a good README
+# Authenticate Docker with Artifact Registry
+gcloud auth configure-docker ${REGION}-docker.pkg.dev
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+# Navigate to the Sandbox Router source directory
+cd $ROOT_DIR
+git clone https://github.com/kubernetes-sigs/agent-sandbox.git
+cd agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/
 
-## Name
-Choose a self-explaining name for your project.
+# Build and push the image using Cloud Build
+export SANDBOX_ROUTER_IMG=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/sandbox-router:latest
+gcloud builds submit --tag $SANDBOX_ROUTER_IMG .
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+### 2. Deploy the Sandbox Router and Gateway
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Save the following routine as a deployment script (e.g., `deploy.sh`), or directly copy and run it in your terminal. This script will automatically install the sandbox infrastructure, set up persistent volumes via Filestore, establish the network sandbox router and gateway, and prepare the warm pool instances.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```bash
+#!/bin/bash
+set -e
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+# Ensure SANDBOX_ROUTER_IMG is set
+if [ -z "$SANDBOX_ROUTER_IMG" ]; then
+  echo "Error: SANDBOX_ROUTER_IMG environment variable is not set."
+  echo "Please set it before deploying: export SANDBOX_ROUTER_IMG=<your_registry_path>/sandbox-router:latest"
+  exit 1
+fi
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+echo "🚀 Starting AI Sandbox One-Click Deployment on GKE..."
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+# 1. Deploy the Agent Sandbox Controller and Extensions
+echo "📦 Deploying Agent Sandbox Controller & CRDs..."
+kubectl apply \
+  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/manifest.yaml \
+  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/extensions.yaml
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+# Wait for sandbox webhooks/controllers to be successfully established
+echo "⏳ Waiting for Agent Sandbox Webhooks to become available..."
+sleep 15
+kubectl wait --for=condition=Ready=True pod --all -n agent-sandbox-system --timeout=120s  || true
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+# 2. Deploy the Sandbox Router and Gateway
+echo "🔄 Deploying Sandbox Router..."
+sed -i "" "s|IMAGE_PLACEHOLDER|${SANDBOX_ROUTER_IMG}|g" "$ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml"
+kubectl apply -f $ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+echo "🌐 Deploying Gateway Networking (gateway.yaml)..."
+kubectl apply -f $ROOT_DIR/sandbox/gateway.yaml
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+echo "✅ Deployment manifests applied successfully!"
+echo "Note: The Gateway and warm pool instances may take a few minutes to fully provision."
+```
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+---
 
-## License
-For open source projects, say how it is licensed.
+## Deployment Scenarios
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Now that your underlying GKE cluster and node pools are provisioned, you have two options for what to deploy:
+
+### 1. Agent Sandbox on GKE
+Deploy a massively scalable, isolated, multi-tenant execution environment where dynamic sandboxes are claimed on demand.
+
+👉 **[Proceed to the Sandbox Deployment Guide](./sandbox/README.MD)**
+
+### 2. Hosted OpenClaw on GKE
+Deploy OpenClaw natively on highly isolated hardware (like Kata/gVisor), giving you a secure, permanent LLM Gateway and agent execution interface.
+
+👉 **[Proceed to the OpenClaw Deployment Guide](./openclaw/README.MD)**
+
+---
+
+## Teardown (Cleanup)
+
+To remove all the resources created during this tutorial and avoid any billing charges, run the following cleanup commands:
+
+```bash
+cd $ROOT_DIR/terraform
+terraform destroy
+```
