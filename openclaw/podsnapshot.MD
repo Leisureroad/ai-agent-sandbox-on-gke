@@ -86,7 +86,7 @@ spec:
   storageConfigName: example-pod-snapshot-storage-config
   selector:
     matchLabels:
-      app: my-app
+      app: openclaw-gvisor
   triggerConfig:
     type: manual
     postCheckpoint: resume
