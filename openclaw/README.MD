@@ -13,3 +13,4 @@ openclaw devices list
 openclaw devices approve <request ID>
 
 ```
+Next, please refer to [configure-feishu.MD](./configure-feishu.MD) to configure feishu.
