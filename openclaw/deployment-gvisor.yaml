@@ -63,11 +63,11 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app: openclaw
+      app: openclaw-gvisor
   template:
     metadata:
       labels:
-        app: openclaw
+        app: openclaw-gvisor
       annotations:
         podsnapshot.gke.io/ps-name: "<Your podsnapshot name>"
     spec:
@@ -134,16 +134,8 @@ spec:
         - name: OPENCLAW_PLUGINS_ENTRIES_DEVICE_PAIR_CONFIG_AUTOAPPROVEROLE
           value: 'operator'
         volumeMounts:
-        # - mountPath: /home/node/.openclaw
-        #   name: openclaw-data
         - name: storage
           mountPath: /home/node/.openclaw
-        # - name: config
-        #   mountPath: /home/node/.openclaw/openclaw.json
-        #   subPath: openclaw.json
-        # - name: config
-        #   mountPath: /home/node/.openclaw/workspace/AGENTS.md
-        #   subPath: AGENTS.md
         resources:
           requests:
             cpu: "1"
@@ -158,22 +150,3 @@ spec:
       - name: config-source-vol
         configMap:
           name: openclaw-config
-      # - name: config
-      #   configMap:
-      #     name: openclaw-config
-      # - name: openclaw-data
-      #   emptyDir: {}
-        
-# ---
-# apiVersion: v1
-# kind: Service
-# metadata:
-#   name: openclaw-service
-# spec:
-#   type: LoadBalancer # GKE 会自动为此创建外部负载均衡器和 IP
-#   selector:
-#     app: openclaw
-#   ports:
-#   - protocol: TCP
-#     port: 18789
-#     targetPort: 18789

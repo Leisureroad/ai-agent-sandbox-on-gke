@@ -45,7 +45,7 @@ data:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: openclaw-pvc-deploy
+  name: openclaw-kata-pvc-deploy
 spec:
   accessModes:
     - ReadWriteOnce
@@ -56,18 +56,18 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: openclaw
+  name: openclaw-kata
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: openclaw
+      app: openclaw-kata
   template:
     metadata:
       labels:
-        app: openclaw
+        app: openclaw-kata
     spec:
       # hostNetwork: true
       runtimeClassName: kata-clh
@@ -132,16 +132,8 @@ spec:
         - name: OPENCLAW_PLUGINS_ENTRIES_DEVICE_PAIR_CONFIG_AUTOAPPROVEROLE
           value: 'operator'
         volumeMounts:
-        # - mountPath: /home/node/.openclaw
-        #   name: openclaw-data
         - name: storage
           mountPath: /home/node/.openclaw
-        # - name: config
-        #   mountPath: /home/node/.openclaw/openclaw.json
-        #   subPath: openclaw.json
-        # - name: config
-        #   mountPath: /home/node/.openclaw/workspace/AGENTS.md
-        #   subPath: AGENTS.md
         resources:
           requests:
             cpu: "1"
@@ -152,26 +144,7 @@ spec:
       volumes:
       - name: storage
         persistentVolumeClaim:
-          claimName: openclaw-pvc-deploy
+          claimName: openclaw-kata-pvc-deploy
       - name: config-source-vol
         configMap:
           name: openclaw-config
-      # - name: config
-      #   configMap:
-      #     name: openclaw-config
-      # - name: openclaw-data
-      #   emptyDir: {}
-        
-# ---
-# apiVersion: v1
-# kind: Service
-# metadata:
-#   name: openclaw-service
-# spec:
-#   type: LoadBalancer # GKE 会自动为此创建外部负载均衡器和 IP
-#   selector:
-#     app: openclaw
-#   ports:
-#   - protocol: TCP
-#     port: 18789
-#     targetPort: 18789
