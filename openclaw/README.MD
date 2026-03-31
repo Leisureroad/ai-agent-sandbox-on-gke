@@ -4,7 +4,10 @@ This guide provides a consolidated, seamless process to deploy a secure and isol
 
 ## Deploy OpenClaw
 ```bash
+# you need to update your GEMINI API KEY and pod snapshot name in deployment-gvisor.yaml before you deploy it.
 kubectl apply -f deployment-gvisor.yaml
+
+# you need to update your GEMINI API KEY in deployment-kata.yaml before you deploy it.
 kubectl apply -f deployment-kata.yaml
 kubectl exec -it <pod> -- sh
 
