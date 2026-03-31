@@ -1,0 +1,137 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openclaw-secrets
+type: Opaque
+stringData:
+  GEMINI_API_KEY: "<Your Gemini API Key>"
+  OPENCLAW_GATEWAY_TOKEN: "admin-token-123"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+data:
+  openclaw.json: |
+    {
+      "gateway": {
+        "mode": "local",
+        "controlUi": {
+          "allowedOrigins": ["*"]
+        },
+        "bind": "lan",
+        "trustedProxies": ["127.0.0.1"],
+        "auth": {
+          "mode": "token",
+          "token": "c6113e3882b2a408d287330758f0b59aa428c00567c38e83"
+        }
+      },
+      "agents": {
+        "defaults": {
+          "model": "google/gemini-3-flash-preview"
+        }
+      }
+    }
+  AGENTS.md: |
+    # 欢迎使用 OpenClaw
+    我是运行在 GKE 上的智能助理。我已经准备好使用 Gemini-3 为你服务了。
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openclaw-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: openclaw-template-gvisor
+  namespace: default
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: openclaw-sandbox
+    spec:
+      runtimeClassName: gvisor
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: cloud.google.com/gke-nodepool
+                operator: In
+                values:
+                - gvisor-nodepool
+      # securityContext:
+      #   runAsUser: 1000
+      #   runAsGroup: 1000
+      #   fsGroup: 1000
+      containers:
+      - name: openclaw
+        image: ghcr.io/openclaw/openclaw:latest
+        ports:
+        - containerPort: 18789
+        readinessProbe:
+          tcpSocket:
+            port: 18789
+          initialDelaySeconds: 2
+          periodSeconds: 2
+        env:
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: GEMINI_API_KEY
+        - name: OPENCLAW_GATEWAY_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: OPENCLAW_GATEWAY_TOKEN
+        - name: OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
+          value: "1"
+        - name: OPENCLAW_COMMANDS_RESTART
+          value: 'false'
+        - name: OPENCLAW_NO_RESPAWN
+          value: 'true'
+        - name: OPENCLAW_GATEWAY_CONTROLUI_ALLOWEDORIGINS
+          value: '*'
+        volumeMounts:
+        - name: storage
+          mountPath: /home/node/.openclaw
+        - name: config
+          mountPath: /home/node/.openclaw/openclaw.json
+          subPath: openclaw.json
+        # - name: config
+        #   mountPath: /home/node/.openclaw/workspace/AGENTS.md
+        #   subPath: AGENTS.md
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+      restartPolicy: "OnFailure"
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: openclaw-pvc
+      - name: config
+        configMap:
+          name: openclaw-config
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: openclaw-warmpool-gvisor
+  namespace: default
+spec:
+  replicas: 5
+  sandboxTemplateRef:
+    name: openclaw-template-gvisor
