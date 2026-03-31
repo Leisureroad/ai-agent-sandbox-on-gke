@@ -1,7 +1,7 @@
-# Deploy Secure AI Sandbox on GKE
+# Deploy Secure AI Agent Sandbox on GKE
 
 This guide walks you through deploying the dynamic `agent-sandbox` controller, building the sandbox router, and running tests. It assumes you have already run the Terraform infrastructure provisioning step in the main guide.
-# Deploy Sandbox and Test
+# Deploy AI Agent Sandbox and Test
 
 ## Deploy the Filestore PVC and Sandbox Templates
 

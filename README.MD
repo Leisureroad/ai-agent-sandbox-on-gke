@@ -1,4 +1,4 @@
-# AI Sandbox Deployment Solution on GKE
+# AI Agent Sandbox Deployment Solution on GKE
 
 This guide provides a consolidated, seamless process to deploy a secure and isolated AI Sandbox environment on Google Kubernetes Engine (GKE).
 
