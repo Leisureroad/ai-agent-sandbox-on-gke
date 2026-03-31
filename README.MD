@@ -20,8 +20,8 @@ Before executing the deployment, ensure your local environment meets the followi
 
 ```bash
 # Set your environment variables
-git clone https://gitlab.com/google-cloud-ce/googlers/liufan/ai-agent-on-gke.git
-cd ai-agent-on-gke
+git clone https://github.com/Leisureroad/ai-agent-sandbox-on-gke.git
+cd ai-agent-sandbox-on-gke
 export ROOT_DIR=$(pwd)
 export PROJECT_ID=<YOUR_PROJECT_ID>
 export REGION=us-central1
