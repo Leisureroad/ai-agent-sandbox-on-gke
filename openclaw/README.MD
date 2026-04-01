@@ -11,10 +11,22 @@ kubectl apply -f deployment-gvisor.yaml
 kubectl apply -f deployment-kata.yaml
 kubectl exec -it <pod> -- sh
 
-openclaw configure
-openclaw tui
 openclaw devices list
-openclaw devices approve <request ID>
+
+# sample:
+Direct scope access failed; using local fallback.
+Pending (1)
+┌──────────────────────────────────────┬───────────────────────────────────────┬──────────┬──────────────────────────────────────────────────────────┬────────────┬──────────┬────────┐
+│ Request                              │ Device                                │ Role     │ Scopes                                                   │ IP         │ Age      │ Flags  │
+├──────────────────────────────────────┼───────────────────────────────────────┼──────────┼──────────────────────────────────────────────────────────┼────────────┼──────────┼────────┤
+│ 8f2e4b4d-836c-4a27-a0e3-d558a7fd4ffb │ a3dff1ee9cf6b9dafad9cd3e1d3ee76deb7e9 │ operator │ operator.admin, operator.read, operator.write, operator. │            │ just now │        │
+│                                      │ 4787d32840395c6841d5352b6a6           │          │ approvals, operator.pairing                              │            │          │        │
+└──────────────────────────────────────┴───────────────────────────────────────┴──────────┴──────────────────────────────────────────────────────────┴────────────┴──────────┴────────┘
+
+openclaw devices approve 8f2e4b4d-836c-4a27-a0e3-d558a7fd4ffb
+
+openclaw tui
+
 
 ```
 ## Next
