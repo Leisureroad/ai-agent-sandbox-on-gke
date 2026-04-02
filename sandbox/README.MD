@@ -24,7 +24,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install the agentic-sandbox-client and its dependencies
-pip install "git+https://github.com/kubernetes-sigs/agent-sandbox.git@main#subdirectory=clients/python/agentic-sandbox-client"
+pip install k8s-agent-sandbox==0.2.1
 ```
 
 ### 2. Configure Local Authentication
