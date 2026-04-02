@@ -80,8 +80,8 @@ helm show values "${CHART}" --version "${VERSION}"
 # Deploy the Agent Sandbox Controller and Extensions
 echo "📦 Deploying Agent Sandbox Controller & CRDs..."
 kubectl apply \
-  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/manifest.yaml \
-  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/extensions.yaml
+  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.2.1/manifest.yaml \
+  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.2.1/extensions.yaml
 
 # Wait for sandbox webhooks/controllers to be successfully established
 echo "⏳ Waiting for Agent Sandbox Webhooks to become available..."
