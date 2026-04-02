@@ -5,8 +5,8 @@ This guide provides a consolidated, seamless process to deploy a secure and isol
 ## Table of Contents
 1. [Prerequisites](#prerequisites)
 2. [Infrastructure Provisioning via Terraform](#infrastructure-provisioning-via-terraform)
-3. [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway)
-4. [Deployment Scenarios](#deployment-scenarios)
+3. [Deployment Scenarios](#deployment-scenarios)
+4. [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway)
 5. [Cleanup](#cleanup)
 
 ---
@@ -26,6 +26,9 @@ export ROOT_DIR=$(pwd)
 export PROJECT_ID=<YOUR_PROJECT_ID>
 export REGION=us-central1
 export REPO_NAME=ai-sandbox-repo
+
+# Enable required APIs
+gcloud services enable cloudresourcemanager.googleapis.com container.googleapis.com servicenetworking.googleapis.com cloudbuild.googleapis.com compute.googleapis.com filestore.googleapis.com
 ```
 
 ---
@@ -71,6 +74,41 @@ helm show values "${CHART}" --version "${VERSION}"
 ```
 ---
 
+## Deploy Agent Sandbox Controller & CRDs
+
+```bash
+# Deploy the Agent Sandbox Controller and Extensions
+echo "📦 Deploying Agent Sandbox Controller & CRDs..."
+kubectl apply \
+  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/manifest.yaml \
+  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/extensions.yaml
+
+# Wait for sandbox webhooks/controllers to be successfully established
+echo "⏳ Waiting for Agent Sandbox Webhooks to become available..."
+sleep 15
+kubectl wait --for=condition=Ready=True pod --all -n agent-sandbox-system --timeout=120s  || true
+```
+
+## Deployment Scenarios
+
+Now that your underlying GKE cluster and node pools are provisioned, you have two options for what to deploy:
+
+### 1. Agent Sandbox on GKE
+
+> [!IMPORTANT]
+> ⚠️ **Prerequisite Step**: You must complete the [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway) section **before** you proceed with the following steps.
+
+Deploy a massively scalable, isolated, multi-tenant execution environment where dynamic sandboxes are claimed on demand.
+
+👉 **[Proceed to the Sandbox Deployment Guide](./sandbox/README.MD)**
+
+### 2. Hosted OpenClaw on GKE
+Deploy OpenClaw natively on highly isolated hardware (like Kata/gVisor), giving you a secure, permanent LLM Gateway and agent execution interface.
+
+👉 **[Proceed to the OpenClaw Deployment Guide](./openclaw/README.MD)**
+
+---
+
 ## Build Sandbox Router & Deploy Gateway
 
 Before running the deployment script, you'll need to build and push the Sandbox Router Docker image to your container registry. The Sandbox Router acts as a central entry point for all sandbox traffic, routing requests dynamically to the correct sandbox.
@@ -104,19 +142,7 @@ gcloud builds submit --tag $SANDBOX_ROUTER_IMG .
 Save the following routine as a deployment script (e.g., `deploy.sh`), or directly copy and run it in your terminal. This script will automatically install the sandbox infrastructure, set up persistent volumes via Filestore, establish the network sandbox router and gateway, and prepare the warm pool instances.
 
 ```bash
-
-# 1. Deploy the Agent Sandbox Controller and Extensions
-echo "📦 Deploying Agent Sandbox Controller & CRDs..."
-kubectl apply \
-  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/manifest.yaml \
-  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/extensions.yaml
-
-# Wait for sandbox webhooks/controllers to be successfully established
-echo "⏳ Waiting for Agent Sandbox Webhooks to become available..."
-sleep 15
-kubectl wait --for=condition=Ready=True pod --all -n agent-sandbox-system --timeout=120s  || true
-
-# 2. Deploy the Sandbox Router and Gateway
+# Deploy the Sandbox Router and Gateway
 echo "🔄 Deploying Sandbox Router..."
 sed -i "" "s|IMAGE_PLACEHOLDER|${SANDBOX_ROUTER_IMG}|g" "$ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml"
 kubectl apply -f $ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml
@@ -125,22 +151,6 @@ echo "🌐 Deploying Gateway Networking (gateway.yaml)..."
 kubectl apply -f $ROOT_DIR/sandbox/gateway.yaml
 
 ```
-
----
-
-## Deployment Scenarios
-
-Now that your underlying GKE cluster and node pools are provisioned, you have two options for what to deploy:
-
-### 1. Agent Sandbox on GKE
-Deploy a massively scalable, isolated, multi-tenant execution environment where dynamic sandboxes are claimed on demand.
-
-👉 **[Proceed to the Sandbox Deployment Guide](./sandbox/README.MD)**
-
-### 2. Hosted OpenClaw on GKE
-Deploy OpenClaw natively on highly isolated hardware (like Kata/gVisor), giving you a secure, permanent LLM Gateway and agent execution interface.
-
-👉 **[Proceed to the OpenClaw Deployment Guide](./openclaw/README.MD)**
 
 ---
 
