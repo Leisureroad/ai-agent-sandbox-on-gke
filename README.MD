@@ -28,7 +28,7 @@ export REGION=us-central1
 export REPO_NAME=ai-sandbox-repo
 
 # Enable required APIs
-gcloud services enable cloudresourcemanager.googleapis.com container.googleapis.com servicenetworking.googleapis.com cloudbuild.googleapis.com compute.googleapis.com filestore.googleapis.com
+gcloud services enable cloudresourcemanager.googleapis.com container.googleapis.com servicenetworking.googleapis.com cloudbuild.googleapis.com compute.googleapis.com file.googleapis.com
 ```
 
 ---
