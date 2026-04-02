@@ -27,26 +27,6 @@ resource "google_compute_subnetwork" "sandbox_subnet" {
   }
 }
 
-# 1b. Create Cloud NAT (Required for private nodes to access the internet)
-resource "google_compute_router" "router" {
-  name    = "sandbox-router"
-  region  = var.region
-  network = google_compute_network.sandbox_network.id
-}
-
-resource "google_compute_router_nat" "nat" {
-  name                               = "sandbox-nat"
-  router                             = google_compute_router.router.name
-  region                             = var.region
-  nat_ip_allocate_option             = "AUTO_ONLY"
-  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
-
-  log_config {
-    enable = true
-    filter = "ERRORS_ONLY"
-  }
-}
-
 # 2. Create the GKE Cluster
 resource "google_container_cluster" "sandbox_cluster" {
   name                = var.cluster_name
@@ -64,21 +44,6 @@ resource "google_container_cluster" "sandbox_cluster" {
   ip_allocation_policy {
     cluster_secondary_range_name  = "pods"
     services_secondary_range_name = "services"
-  }
-
-  # Make cluster private to avoid external IP restrictions
-  private_cluster_config {
-    enable_private_nodes    = true
-    enable_private_endpoint = false
-    master_ipv4_cidr_block  = "172.16.0.0/28"
-  }
-
-  # Node config for the temporary default pool (satisfies org policies)
-  node_config {
-    shielded_instance_config {
-      enable_secure_boot          = true
-      enable_integrity_monitoring = true
-    }
   }
 
   # Enable Workload Identity (Best Practice & often required for secure sandboxing)
@@ -127,11 +92,6 @@ resource "google_container_node_pool" "kata_nodepool" {
       mode = "GKE_METADATA"
     }
 
-    shielded_instance_config {
-      enable_secure_boot          = true
-      enable_integrity_monitoring = true
-    }
-
     # Used for ensuring scheduling to this specific pool
     labels = {
       "sandbox-node" = "true"
@@ -168,11 +128,6 @@ resource "google_container_node_pool" "gvisor_nodepool" {
 
     workload_metadata_config {
       mode = "GKE_METADATA"
-    }
-
-    shielded_instance_config {
-      enable_secure_boot          = true
-      enable_integrity_monitoring = true
     }
 
     labels = {
