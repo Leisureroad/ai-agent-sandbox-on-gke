@@ -63,7 +63,12 @@ steps:
       export VERSION=$(curl -sSL https://api.github.com/repos/kata-containers/kata-containers/releases/latest | jq .tag_name | tr -d '"')
       helm install kata-deploy "oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy" --version "$$VERSION" || true
 
-  # 4. Deploy OpenClaw (Kata)
+      # 4. Install sandbox controller and Crd
+      kubectl apply \
+        -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.2.1/manifest.yaml \
+        -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.2.1/extensions.yaml
+
+  # 5. Deploy OpenClaw (Kata)
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     id: 'deploy-openclaw'
     entrypoint: "bash"
@@ -71,6 +76,9 @@ steps:
     - "-c"
     - |
       echo "🚀 Deploying OpenClaw components..."
-      kubectl apply -f openclaw/deployment-kata.yaml
+      export OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
+      sed "s/dummy-token-for-sandbox/$$OPENCLAW_GATEWAY_TOKEN/g" openclaw/openclaw-sandbox.yaml
+      kubectl apply -f openclaw/openclaw-sandbox.yaml
+
 
 # Variables are handled via --substitutions at runtime

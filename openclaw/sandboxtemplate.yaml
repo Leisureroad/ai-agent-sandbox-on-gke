@@ -4,7 +4,9 @@ metadata:
   name: openclaw-secrets
 type: Opaque
 stringData:
-  GEMINI_API_KEY: "<Your Gemini API Key>"
+  # 在此处填写你的 Gemini API Key
+  GEMINI_API_KEY: "Your Gemini API Key"
+  # 固定 Token
   OPENCLAW_GATEWAY_TOKEN: "admin-token-123"
 ---
 apiVersion: v1
@@ -23,7 +25,11 @@ data:
         "trustedProxies": ["127.0.0.1"],
         "auth": {
           "mode": "token",
-          "token": "c6113e3882b2a408d287330758f0b59aa428c00567c38e83"
+          "token": "admin-token-123"
+        },
+        "remote": {
+          "url": "ws://127.0.0.1:18789",
+          "token": "admin-token-123"
         }
       },
       "agents": {
@@ -41,6 +47,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: openclaw-pvc
 spec:
+  # 注意：在多节点或多副本场景下，建议使用 ReadWriteMany (如 Filestore)
   accessModes:
     - ReadWriteOnce
   resources:
@@ -50,38 +57,51 @@ spec:
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
 metadata:
-  name: openclaw-template-gvisor
+  name: openclaw-template-kata
   namespace: default
 spec:
   podTemplate:
     metadata:
       labels:
         sandbox: openclaw-sandbox
+        runtime: kata
     spec:
-      runtimeClassName: gvisor
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: cloud.google.com/gke-nodepool
-                operator: In
-                values:
-                - gvisor-nodepool
-      # securityContext:
-      #   runAsUser: 1000
-      #   runAsGroup: 1000
-      #   fsGroup: 1000
+      runtimeClassName: kata-clh
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      initContainers:
+      - name: init-config
+        image: busybox:latest
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+        command:
+        - sh
+        - -c
+        - |
+          if [ ! -s /data/openclaw.json ]; then
+            echo "Config missing or empty. Copying from ConfigMap..."
+            cp /config-source/openclaw.json /data/openclaw.json
+            sync
+            echo "Copy complete."
+          else
+            echo "Valid config already exists, skipping."
+          fi
+        volumeMounts:
+        - name: config-source-vol
+          mountPath: /config-source
+        - name: storage
+          mountPath: /data
+
       containers:
       - name: openclaw
         image: ghcr.io/openclaw/openclaw:latest
         ports:
         - containerPort: 18789
-        readinessProbe:
-          tcpSocket:
-            port: 18789
-          initialDelaySeconds: 2
-          periodSeconds: 2
+          name: gateway
         env:
         - name: GEMINI_API_KEY
           valueFrom:
@@ -101,37 +121,36 @@ spec:
           value: 'true'
         - name: OPENCLAW_GATEWAY_CONTROLUI_ALLOWEDORIGINS
           value: '*'
+        - name: OPENCLAW_PLUGINS_ENTRIES_DEVICE_PAIR_CONFIG_AUTOAPPROVEROLE
+          value: 'operator'
         volumeMounts:
         - name: storage
           mountPath: /home/node/.openclaw
-        - name: config
-          mountPath: /home/node/.openclaw/openclaw.json
-          subPath: openclaw.json
-        # - name: config
-        #   mountPath: /home/node/.openclaw/workspace/AGENTS.md
-        #   subPath: AGENTS.md
         resources:
           requests:
             cpu: "1"
-            memory: "2Gi"
+            memory: "4Gi"
           limits:
             cpu: "2"
-            memory: "2Gi"
+            memory: "4Gi"
+      
       restartPolicy: "OnFailure"
       volumes:
       - name: storage
         persistentVolumeClaim:
           claimName: openclaw-pvc
-      - name: config
+      - name: config-source-vol
         configMap:
           name: openclaw-config
 ---
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxWarmPool
 metadata:
-  name: openclaw-warmpool-gvisor
+  name: openclaw-warmpool-kata
   namespace: default
 spec:
-  replicas: 5
+  # 警告：由于使用了 ReadWriteOnce PVC，replicas 大于 1 可能会导致挂载冲突
+  # 建议在 kata-pool 负载测试完成后切换为 Filestore (RWX)
+  replicas: 1
   sandboxTemplateRef:
-    name: openclaw-template-gvisor
+    name: openclaw-template-kata

@@ -53,19 +53,18 @@ cd ai-agent-sandbox-on-gke
 
 gcloud builds submit --config cloudbuild.yaml \
   --substitutions=_REGION="$REGION",_ZONE="$ZONE"
+gcloud container clusters get-credentials ai-sandbox-cluster --region $REGION --project $PROJECT_ID
+kubectl port-forward pod/openclaw-sandbox 18789:18789
 ```
 
-## 3. Configure OpenClaw
->You need to update your GEMINI API KEY and pod snapshot name in deployment-gvisor.yaml before you deploy it.
+### 3. Access the Web UI: Open http://localhost:18789 in your browser.
 
+### 4. Openclaw CLI
+You can run OpenClaw CLI commands directly inside the sandbox container.
 ```bash
-kubectl exec -it <pod> -- sh
-
-openclaw devices list
-openclaw devices approve
-openclaw tui
+kubectl exec -it openclaw-sandbox -- openclaw --help
 ```
-👉 **[Proceed to the OpenClaw Deployment Guide](./openclaw/README.MD)**
+
 ---
 
 ## Table of Contents
