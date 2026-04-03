@@ -53,6 +53,7 @@ cd ai-agent-sandbox-on-gke
 
 gcloud builds submit --config cloudbuild.yaml \
   --substitutions=_REGION="$REGION",_ZONE="$ZONE"
+  
 gcloud container clusters get-credentials ai-sandbox-cluster --region $REGION --project $PROJECT_ID
 kubectl port-forward pod/openclaw-sandbox 18789:18789
 ```
