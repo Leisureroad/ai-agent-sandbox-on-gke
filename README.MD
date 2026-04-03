@@ -2,6 +2,56 @@
 
 This guide provides a consolidated, seamless process to deploy a secure and isolated AI Sandbox environment on Google Kubernetes Engine (GKE).
 
+## 🔥 One-Click OpenClaw Deployment (HOT)
+
+> **Production-Ready & Fully Automated**: This is the fastest way to deploy the entire solution including infrastructure and applications.
+
+### 1. Configure Environment and IAM Permissions
+Run the following script to grant necessary permissions to the service accounts:
+
+```bash
+# Get project info automatically
+export PROJECT_ID=<YOUR_PROJECT_ID>
+export PROJECT_NUMBER=$(gcloud projects list --filter="projectId:$PROJECT_ID" --format="value(projectNumber)")
+export REGION="us-central1"
+export ZONE="us-central1-a"
+
+# Enable required APIs
+gcloud config set project $PROJECT_ID
+gcloud services enable cloudresourcemanager.googleapis.com container.googleapis.com servicenetworking.googleapis.com cloudbuild.googleapis.com compute.googleapis.com file.googleapis.com
+
+# Grant necessary roles to the Compute account (required for Infrastructure/GKE management)
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+    --role="roles/editor"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+    --role="roles/container.admin"
+```
+
+### 2. Run the Deployment
+```bash
+# Clone and Deploy
+git clone https://github.com/Leisureroad/ai-agent-sandbox-on-gke.git
+cd ai-agent-sandbox-on-gke
+
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=_REGION="$REGION",_ZONE="$ZONE"
+```
+
+## 3. Configure OpenClaw
+>You need to update your GEMINI API KEY and pod snapshot name in deployment-gvisor.yaml before you deploy it.
+
+```bash
+kubectl exec -it <pod> -- sh
+
+openclaw devices list
+openclaw devices approve
+openclaw tui
+```
+---
+
 ## Table of Contents
 1. [Prerequisites](#prerequisites)
 2. [Infrastructure Provisioning via Terraform](#infrastructure-provisioning-via-terraform)

@@ -1,0 +1,76 @@
+timeout: 3600s
+options:
+  machineType: "E2_HIGHCPU_8"
+  logging: CLOUD_LOGGING_ONLY
+  substitution_option: "ALLOW_LOOSE"
+
+steps:
+  # 1. Infrastructure Provisioning via Terraform
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'prepare-terraform-state'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      # Create GCS bucket for Terraform state if it doesn't exist
+      gsutil mb -p ${PROJECT_ID} gs://${PROJECT_ID}-tfstate || true
+
+  - name: "hashicorp/terraform:1.6.0"
+    id: 'terraform-init'
+    dir: "terraform"
+    args: [
+      "init",
+      "-backend-config=bucket=${PROJECT_ID}-tfstate",
+      "-backend-config=prefix=terraform/state"
+    ]
+  
+  - name: "hashicorp/terraform:1.6.0"
+    id: 'terraform-apply'
+    dir: "terraform"
+    args: [
+      "apply",
+      "-var=project_id=${PROJECT_ID}",
+      "-var=region=${_REGION}",
+      "-var=zone=${_ZONE}",
+      "-auto-approve"
+    ]
+
+  # 2. Get GKE Credentials
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'get-gke-credentials'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      gcloud container clusters get-credentials ai-sandbox-cluster --region ${_REGION} --project ${PROJECT_ID}
+
+  # 3. Install Runtime Support (Kata)
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'install-kata'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      # 1. Ensure jq is installed
+      command -v jq >/dev/null 2>&1 || (apt-get update && apt-get install -y jq)
+      
+      # 2. Ensure helm is installed
+      if ! command -v helm >/dev/null 2>&1; then
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      fi
+
+      # 3. Fetch latest version and install
+      export VERSION=$(curl -sSL https://api.github.com/repos/kata-containers/kata-containers/releases/latest | jq .tag_name | tr -d '"')
+      helm install kata-deploy "oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy" --version "$$VERSION" || true
+
+  # 4. Deploy OpenClaw (Kata)
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'deploy-openclaw'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      echo "🚀 Deploying OpenClaw components..."
+      kubectl apply -f openclaw/deployment-kata.yaml
+
+# Variables are handled via --substitutions at runtime
