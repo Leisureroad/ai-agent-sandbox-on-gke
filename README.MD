@@ -12,13 +12,14 @@ Run the following script to grant necessary permissions to the service accounts:
 ```bash
 # Get project info automatically
 export PROJECT_ID=<YOUR_PROJECT_ID>
+
+# Set project and enable required APIs
+gcloud config set project $PROJECT_ID
+gcloud services enable cloudresourcemanager.googleapis.com container.googleapis.com servicenetworking.googleapis.com cloudbuild.googleapis.com compute.googleapis.com file.googleapis.com
+
 export PROJECT_NUMBER=$(gcloud projects list --filter="projectId:$PROJECT_ID" --format="value(projectNumber)")
 export REGION="us-central1"
 export ZONE="us-central1-a"
-
-# Enable required APIs
-gcloud config set project $PROJECT_ID
-gcloud services enable cloudresourcemanager.googleapis.com container.googleapis.com servicenetworking.googleapis.com cloudbuild.googleapis.com compute.googleapis.com file.googleapis.com
 
 # Grant necessary roles to the Compute account (required for Infrastructure/GKE management)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
@@ -28,6 +29,20 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
     --role="roles/container.admin"
+```
+
+### Ensure Organization Policy compute.disableNestedVirtualization is Off (Optional)
+```bash
+# Generate the policy file with variable expansion
+cat <<EOF > policy.yaml
+name: projects/$PROJECT_ID/policies/compute.disableNestedVirtualization
+spec:
+  inheritFromParent: false
+  rules:
+  - enforce: false
+EOF
+
+gcloud org-policies set-policy policy.yaml
 ```
 
 ### 2. Run the Deployment
@@ -50,6 +65,7 @@ openclaw devices list
 openclaw devices approve
 openclaw tui
 ```
+👉 **[Proceed to the OpenClaw Deployment Guide](./openclaw/README.MD)**
 ---
 
 ## Table of Contents

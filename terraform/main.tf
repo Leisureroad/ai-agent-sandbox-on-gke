@@ -31,6 +31,21 @@ resource "google_compute_subnetwork" "sandbox_subnet" {
   }
 }
 
+# 1.5 Create Cloud NAT for Private Cluster
+resource "google_compute_router" "router" {
+  name    = "sandbox-router"
+  region  = var.region
+  network = google_compute_network.sandbox_network.id
+}
+
+resource "google_compute_router_nat" "nat" {
+  name                               = "sandbox-nat"
+  router                             = google_compute_router.router.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+}
+
 # 2. Create the GKE Cluster
 resource "google_container_cluster" "sandbox_cluster" {
   name                = var.cluster_name
@@ -43,6 +58,14 @@ resource "google_container_cluster" "sandbox_cluster" {
 
   network    = google_compute_network.sandbox_network.name
   subnetwork = google_compute_subnetwork.sandbox_subnet.name
+
+  # Enable Shielded VM for the temporary default pool to bypass org-policy check
+  node_config {
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+  }
 
   # Network configuration using secondary IP ranges
   ip_allocation_policy {
@@ -66,6 +89,12 @@ resource "google_container_cluster" "sandbox_cluster" {
       enabled = true
     }
   }
+
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = false
+    master_ipv4_cidr_block  = "172.16.0.0/28"
+  }
 }
 
 # 3. Create the Node Pool for Kata Containers
@@ -86,6 +115,11 @@ resource "google_container_node_pool" "kata_nodepool" {
     advanced_machine_features {
       enable_nested_virtualization = true
       threads_per_core             = 2
+    }
+
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
     }
 
     oauth_scopes = [
@@ -124,6 +158,11 @@ resource "google_container_node_pool" "gvisor_nodepool" {
     # Enables native GKE Sandbox (gVisor)
     sandbox_config {
       type = "GVISOR"
+    }
+
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
     }
 
     oauth_scopes = [
