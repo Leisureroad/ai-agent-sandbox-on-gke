@@ -22,7 +22,7 @@ spec:
       labels:
         sandbox: openclaw-sandbox
     spec:
-      runtimeClassName: kata-clh
+      # runtimeClassName: kata-clh
       automountServiceAccountToken: false
       securityContext:
         runAsUser: 1000
