@@ -68,7 +68,22 @@ steps:
         -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.2.1/manifest.yaml \
         -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.2.1/extensions.yaml
 
-  # 5. Deploy OpenClaw (Kata)
+  # 5. Configure workload identity
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'configure-workload-identity'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      # 1. Create the Service Account
+      kubectl create serviceaccount gemini-app-sa -n default || true
+
+      # 2. Annotate the K8s Service Account
+      kubectl annotate serviceaccount gemini-app-sa \
+      --namespace default \
+      iam.gke.io/gcp-service-account=vertex-ai-client@${PROJECT_ID}.iam.gserviceaccount.com
+
+  # 6. Deploy OpenClaw (Kata)
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     id: 'deploy-openclaw'
     entrypoint: "bash"
@@ -76,9 +91,14 @@ steps:
     - "-c"
     - |
       echo "🚀 Deploying OpenClaw components..."
-      export OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
-      sed "s/dummy-token-for-sandbox/$$OPENCLAW_GATEWAY_TOKEN/g" openclaw/openclaw-sandbox.yaml
-      kubectl apply -f openclaw/openclaw-sandbox.yaml
+      # export OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
+      # sed "s/dummy-token-for-sandbox/$$OPENCLAW_GATEWAY_TOKEN/g" openclaw/openclaw-sandbox.yaml
+      # kubectl apply -f openclaw/openclaw-sandbox.yaml
 
+      kubectl apply -f openclaw/litellm-deployment.yaml
+      sed -i "s/REGION/${_REGION}/g" openclaw/openclaw-sandbox-gvisor.yaml
+      sed -i "s/PROJECT_ID/${PROJECT_ID}/g" openclaw/openclaw-sandbox-gvisor.yaml
+      kubectl apply -f openclaw/openclaw-sandbox-gvisor.yaml
+      
 
 # Variables are handled via --substitutions at runtime

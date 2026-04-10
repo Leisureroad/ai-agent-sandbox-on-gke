@@ -7,6 +7,29 @@ provider "google" {
   region  = var.region
 }
 
+provider "google-beta" {
+  project     = var.project_id
+  region      = var.region
+}
+
+# 0. Create Remote Artifact Registry for GHCR
+resource "google_artifact_registry_repository" "ghcr_remote" {
+  provider      = google-beta
+  location      = var.region
+  repository_id = "ghcr"
+  description   = "Remote repository proxy for ghcr.io"
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+
+  remote_repository_config {
+    docker_repository {
+      custom_repository {
+        uri = "https://ghcr.io"
+      }
+    }
+  }
+}
+
 # 1. Create the VPC Network
 resource "google_compute_network" "sandbox_network" {
   name                    = "sandbox-network"
@@ -65,6 +88,9 @@ resource "google_container_cluster" "sandbox_cluster" {
       enable_secure_boot          = true
       enable_integrity_monitoring = true
     }
+    gcfs_config {
+      enabled = true
+    }
   }
 
   # Network configuration using secondary IP ranges
@@ -88,7 +114,13 @@ resource "google_container_cluster" "sandbox_cluster" {
     gcp_filestore_csi_driver_config {
       enabled = true
     }
+
+    pod_snapshot_config {
+      enabled = true
+    }
   }
+
+  provider = google-beta
 
   private_cluster_config {
     enable_private_nodes    = true
@@ -128,6 +160,10 @@ resource "google_container_node_pool" "kata_nodepool" {
 
     workload_metadata_config {
       mode = "GKE_METADATA"
+    }
+
+    gcfs_config {
+      enabled = true
     }
 
     # Used for ensuring scheduling to this specific pool
@@ -173,6 +209,10 @@ resource "google_container_node_pool" "gvisor_nodepool" {
       mode = "GKE_METADATA"
     }
 
+    gcfs_config {
+      enabled = true
+    }
+
     labels = {
       "sandbox-node" = "gvisor"
     }
@@ -210,3 +250,26 @@ resource "null_resource" "cleanup_neg_on_destroy" {
 
   depends_on = [google_container_cluster.sandbox_cluster]
 }
+
+# 6. Workload Identity Configuration for Vertex AI
+resource "google_service_account" "vertex_ai_client" {
+  account_id   = "vertex-ai-client"
+  display_name = "Vertex AI Client Service Account"
+}
+
+resource "google_project_iam_member" "vertex_ai_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.vertex_ai_client.email}"
+}
+
+resource "google_service_account_iam_member" "workload_identity_user" {
+  service_account_id = google_service_account.vertex_ai_client.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[default/gemini-app-sa]"
+
+  # Ensure the cluster's workload identity pool is ready
+  depends_on = [google_container_cluster.sandbox_cluster]
+}
+
+

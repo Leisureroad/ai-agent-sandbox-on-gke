@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+data:
+  config.yaml: |
+    model_list:
+      - model_name: gemini-2.5-flash
+        litellm_params:
+          model: vertex_ai/gemini-2.5-flash
+          vertex_project: "os.environ/VERTEX_PROJECT"
+          vertex_location: "os.environ/VERTEX_LOCATION"
+      - model_name: gemini-2.5-pro
+        litellm_params:
+          model: vertex_ai/gemini-2.5-pro
+          vertex_project: "os.environ/VERTEX_PROJECT"
+          vertex_location: "os.environ/VERTEX_LOCATION"
+      - model_name: gemini-3-flash-preview
+        litellm_params:
+          model: vertex_ai/gemini-3.0-flash  # Vertex AI 通常使用 3.0-flash 或其他命名，请确认具体型号
+          vertex_project: "os.environ/VERTEX_PROJECT"
+          vertex_location: "os.environ/VERTEX_LOCATION"
+      - model_name: gemini-3.1-flash-lite-preview
+        litellm_params:
+          model: vertex_ai/gemini-3.1-flash-lite-preview
+          vertex_project: "os.environ/VERTEX_PROJECT"
+          vertex_location: "global"
+    litellm_settings:
+      drop_params: true
+      # 可选：如果需要鉴权才能访问 proxy，可以设置 master_key
+      # master_key: "sk-litellm-proxy-secret"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-proxy
+  labels:
+    app: litellm-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: litellm-proxy
+  template:
+    metadata:
+      labels:
+        app: litellm-proxy
+    spec:
+      # 如果你在使用 Workload Identity 访问 Vertex AI，解除这里的注释
+      serviceAccountName: gemini-app-sa
+      containers:
+      - name: litellm
+        image: ghcr.io/berriai/litellm:main-latest
+        args:
+        - "--config"
+        - "/app/config.yaml"
+        - "--port"
+        - "4000"
+        ports:
+        - containerPort: 4000
+          name: http
+        env:
+        # 重用 openclaw-secrets 中的 GEMINI_API_KEY
+        # - name: GEMINI_API_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: openclaw-secrets
+        #       key: GEMINI_API_KEY
+        # - name: LITELLM_MASTER_KEY
+        #   value: "your-secret-key"
+        volumeMounts:
+        - name: litellm-config-volume
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+      volumes:
+      - name: litellm-config-volume
+        configMap:
+          name: litellm-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-service
+spec:
+  selector:
+    app: litellm-proxy
+  ports:
+    - protocol: TCP
+      port: 4000
+      targetPort: 4000
+  type: ClusterIP
