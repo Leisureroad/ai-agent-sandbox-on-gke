@@ -272,4 +272,85 @@ resource "google_service_account_iam_member" "workload_identity_user" {
   depends_on = [google_container_cluster.sandbox_cluster]
 }
 
+# 7. Pod Snapshot Infrastructure
+resource "google_storage_bucket" "pod_snapshot_bucket" {
+  name                        = "sandbox-pod-snapshot-${var.project_id}"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  
+  # Required for GKE Pod Snapshots
+  hierarchical_namespace {
+    enabled = true
+  }
 
+  soft_delete_policy {
+    retention_duration_seconds = 0
+  }
+
+  force_destroy = true
+}
+
+# Custom IAM role for Pod Snapshots
+resource "google_project_iam_custom_role" "pod_snapshot_role" {
+  role_id     = "podSnapshotGcsReadWriter"
+  title       = "Pod Snapshot GCS Read/Writer"
+  description = "Minimal permissions for GKE Pod snapshots"
+  permissions = [
+    "storage.objects.get",
+    "storage.objects.create",
+    "storage.objects.delete",
+    "storage.folders.create"
+  ]
+}
+
+# Grant GKE Controller (Robot SA) permission with condition
+data "google_project" "project" {}
+
+resource "google_project_iam_member" "gke_robot_snapshot_access" {
+  project = var.project_id
+  role    = "roles/storage.objectUser"
+  member  = "serviceAccount:service-${data.google_project.project.number}@container-engine-robot.iam.gserviceaccount.com"
+
+  condition {
+    title       = "restrict_to_bucket"
+    description = "Restricts access to the specific pod snapshot bucket"
+    expression  = "resource.name == \"projects/_/buckets/${google_storage_bucket.pod_snapshot_bucket.name}\""
+  }
+}
+
+# Grant default KSA access to the bucket via Workload Identity
+resource "google_storage_bucket_iam_member" "ksa_bucket_viewer" {
+  bucket = google_storage_bucket.pod_snapshot_bucket.name
+  role   = "roles/storage.bucketViewer"
+  member = "principal://iam.googleapis.com/projects/${data.google_project.project.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/default/sa/default"
+
+  depends_on = [google_container_cluster.sandbox_cluster]
+}
+
+resource "google_storage_bucket_iam_member" "ksa_object_user" {
+  bucket = google_storage_bucket.pod_snapshot_bucket.name
+  role   = "roles/storage.objectUser"
+  member = "principal://iam.googleapis.com/projects/${data.google_project.project.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/default/sa/default"
+
+  depends_on = [google_container_cluster.sandbox_cluster]
+}
+
+# Create managed folder for snapshots
+resource "google_storage_managed_folder" "snapshot_folder" {
+  bucket = google_storage_bucket.pod_snapshot_bucket.name
+  name   = "snapshots/"
+}
+
+# Grant KSA access to the managed folder
+resource "google_storage_managed_folder_iam_member" "ksa_folder_access" {
+  bucket         = google_storage_bucket.pod_snapshot_bucket.name
+  managed_folder = google_storage_managed_folder.snapshot_folder.name
+  role           = google_project_iam_custom_role.pod_snapshot_role.name
+  member         = "principal://iam.googleapis.com/projects/${data.google_project.project.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/default/sa/default"
+
+  depends_on = [google_container_cluster.sandbox_cluster]
+}
+
+output "pod_snapshot_bucket_name" {
+  value = google_storage_bucket.pod_snapshot_bucket.name
+}

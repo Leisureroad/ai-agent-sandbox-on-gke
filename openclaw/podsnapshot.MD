@@ -4,7 +4,7 @@
 ```bash
 gcloud beta container clusters update ai-sandbox-cluster \
    --enable-pod-snapshots \
-   --location=us-central1
+   --location=$REGION
 ```
 
 ## Create a Cloud Storage bucket
@@ -12,8 +12,7 @@ gcloud beta container clusters update ai-sandbox-cluster \
 gcloud storage buckets create "gs://sandbox-pod-snapshot-${PROJECT_ID}" \
    --uniform-bucket-level-access \
    --enable-hierarchical-namespace \
-   --soft-delete-duration=0d \
-   --location="LOCATION"
+   --soft-delete-duration=0d
 ```
 
 ## Grant the KSA permission to access the bucket
@@ -32,7 +31,7 @@ gcloud storage buckets add-iam-policy-binding "gs://sandbox-pod-snapshot-${PROJE
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:service-${PROJECT_NUMBER}@container-engine-robot.iam.gserviceaccount.com" \
   --role="roles/storage.objectUser" \
-  --condition="expression=resource.name == \"projects/_/buckets/sandbox-pod-snapshot-${PROJECT_ID}"\",title=restrict_to_bucket,description=Restricts access to one bucket only"
+  --condition="expression=resource.name == \"projects/_/buckets/sandbox-pod-snapshot-${PROJECT_ID}"\",title=restrict_to_bucket,description="Restricts access to one bucket only"
 ```
 
 ## (Optional) Create managed folders for the Cloud Storage bucket
@@ -86,7 +85,7 @@ spec:
   storageConfigName: example-pod-snapshot-storage-config
   selector:
     matchLabels:
-      sandbox: openclaw-sandbox
+      sandbox: openclaw-sandbox-gvisor
   triggerConfig:
     type: manual
     postCheckpoint: resume
@@ -101,7 +100,7 @@ kind: PodSnapshotManualTrigger
 metadata:
   name: example-manual-trigger
 spec:
-  targetPod: <your pod name>
+  targetPod: openclaw-sandbox-gvisor
 EOF
 ```
 

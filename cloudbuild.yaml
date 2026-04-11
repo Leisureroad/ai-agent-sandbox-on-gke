@@ -100,5 +100,40 @@ steps:
       sed -i "s/PROJECT_ID/${PROJECT_ID}/g" openclaw/openclaw-sandbox-gvisor.yaml
       kubectl apply -f openclaw/openclaw-sandbox-gvisor.yaml
       
-
+  # 7. Configure Pod snapshot 
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'configure-pod-snapshot'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      echo "🚀 Configuring Pod snapshot..."
+      kubectl apply -f - <<EOF
+      apiVersion: podsnapshot.gke.io/v1alpha1
+      kind: PodSnapshotStorageConfig
+      metadata:
+        name: openclaw-pod-snapshot-storage-config
+      spec:
+        snapshotStorageConfig:
+          gcs:
+            bucket: "sandbox-pod-snapshot-${PROJECT_ID}"
+            path: "snapshots"
+      EOF
+      
+      kubectl apply -f - <<EOF
+      apiVersion: podsnapshot.gke.io/v1alpha1
+      kind: PodSnapshotPolicy
+      metadata:
+        name: openclaw-pod-snapshot-policy
+        namespace: default
+      spec:
+        storageConfigName: openclaw-pod-snapshot-storage-config
+        selector:
+          matchLabels:
+            sandbox: openclaw-sandbox-gvisor
+        triggerConfig:
+          type: manual
+          postCheckpoint: resume
+      EOF
+    
 # Variables are handled via --substitutions at runtime

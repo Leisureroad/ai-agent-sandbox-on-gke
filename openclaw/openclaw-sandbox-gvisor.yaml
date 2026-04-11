@@ -88,8 +88,9 @@ spec:
               name: workspaces-pvc
             - mountPath: /home/node/.openclaw
               name: config-volume
-            - mountPath: /etc/openclaw
+            - mountPath: /etc/openclaw/openclaw.json
               name: cm-volume
+              subPath: openclaw.json
       volumes:
         - name: config-volume
           emptyDir: {}
