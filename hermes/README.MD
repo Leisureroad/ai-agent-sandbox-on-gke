@@ -79,3 +79,38 @@ You can run Hermes CLI commands directly inside the sandbox container.
 kubectl exec -it hermes-sandbox-gvisor -- hermes --help
 kubectl exec -it hermes-sandbox-gvisor -- hermes chat
 ```
+
+### 5. Verify Pod Snapshot
+```bash
+kubectl apply -f - <<EOF
+apiVersion: podsnapshot.gke.io/v1alpha1
+kind: PodSnapshotManualTrigger
+metadata:
+  name: example-manual-trigger
+spec:
+  targetPod: hermes-sandbox-gvisor
+EOF
+
+
+# kill hermes pod
+kubectl delete pod hermes-sandbox-gvisor
+
+# wait for the pod to be recreated
+kubectl wait --for=condition=ready pod hermes-sandbox-gvisor --timeout=5m
+
+# check the pod snapshotting status
+kubectl describe pod hermes-sandbox-gvisor
+
+Events:
+  Type    Reason              Age   From               Message
+  ----    ------              ----  ----               -------
+  Normal  Scheduled           50s   default-scheduler  Successfully assigned default/hermes-sandbox-gvisor to gke-ai-sandbox-cluste-gvisor-nodepool-dce8fbc3-t702
+  Normal  Pulling             48s   kubelet            spec.initContainers{init-config}: Pulling image "busybox:latest"
+  Normal  Pulled              48s   kubelet            spec.initContainers{init-config}: Successfully pulled image "busybox:latest" in 177ms (177ms including waiting). Image size: 2222002 bytes.
+  Normal  Created             48s   kubelet            spec.initContainers{init-config}: Container created
+  Normal  Started             45s   kubelet            spec.initContainers{init-config}: Container started
+  Normal  Pulled              43s   kubelet            spec.containers{hermes}: Container image "us-central1-docker.pkg.dev/flius-test-18/dockerhub/nousresearch/hermes-agent" already present on machine and can be accessed by the pod
+  Normal  Created             43s   kubelet            spec.containers{hermes}: Container created
+  Normal  GKEPodSnapshotting  42s   gke-pod-snapshots  Successfully restored the pod from PodSnapshot default/375062cb-ed8b-409f-902c-04adfc95a6e2
+  Normal  Started             42s   kubelet            spec.containers{hermes}: Container started
+```
