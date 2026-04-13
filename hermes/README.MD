@@ -76,7 +76,9 @@ Verify that the Hermes deployment is successful by checking the Pod status.
 ### 4. Hermes CLI
 You can run Hermes CLI commands directly inside the sandbox container.
 ```bash
-kubectl exec -it hermes-sandbox-gvisor -- hermes --help
+kubectl exec -it hermes-sandbox-gvisor -- hermes setup
+kubectl exec -it hermes-sandbox-gvisor -- hermes gateway run
+kubectl exec -it hermes-sandbox-gvisor -- hermes pairing list
 kubectl exec -it hermes-sandbox-gvisor -- hermes chat
 ```
 
@@ -114,3 +116,13 @@ Events:
   Normal  GKEPodSnapshotting  42s   gke-pod-snapshots  Successfully restored the pod from PodSnapshot default/375062cb-ed8b-409f-902c-04adfc95a6e2
   Normal  Started             42s   kubelet            spec.containers{hermes}: Container started
 ```
+
+### 6. Hermes Resource Usage
+
+Hermes is highly optimized for low-resource environments. Based on actual GKE monitoring metrics:
+
+- **Memory Efficiency**: Average RAM consumption stays around **~200MiB**, which is significantly lower than most agentic frameworks. This allows for high-density multi-tenant hosting.
+- **CPU Profile**: Idle CPU usage is near zero, with efficient bursts during task execution that stay well within the **1.0 core** limit.
+- **Scale-to-Zero Compatibility**: Due to its small footprint, Hermes can be rapidly hibernated or restored using Pod Snapshots without heavy hardware overhead.
+
+![Hermes Resource Usage Analysis](./Screenshot.png)
