@@ -64,7 +64,7 @@ gcloud org-policies set-policy policy.yaml
 git clone https://github.com/Leisureroad/ai-agent-sandbox-on-gke.git
 cd ai-agent-sandbox-on-gke
 
-gcloud builds submit --config cloudbuild.yaml \
+gcloud builds submit --config ./openclaw/cloudbuild.yaml \
   --substitutions=_REGION="$REGION",_ZONE="$ZONE"
   
 gcloud container clusters get-credentials ai-sandbox-cluster --region $REGION --project $PROJECT_ID
