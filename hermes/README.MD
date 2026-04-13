@@ -1,13 +1,12 @@
-# OpenClaw Agent on GKE (V2 Draft) 🏛️
+# Hermes Agent on GKE (V2 Draft) 🏛️
 
-OpenClaw is an **open-source, self-hosted autonomous AI agent** designed to act as an **agentic interface** that can take direct actions on your behalf. Unlike standard chatbots, OpenClaw can execute shell commands, manage files, and automate web tasks, serving as a persistent, always-on personal assistant.
+Hermes is an **open-source, self-improving AI agent** developed by Nous Research, designed to "grow with you." Unlike conventional tools, Hermes builds **persistent memory**, creates **reusable skills** from experience, and refines its capabilities over time through a **closed learning loop**.
 
 ## 🌟 Solution Highlights
 - **Full-featured UI**: Manage agents, tools, and conversations.
 - **Vertex AI Native**: Deeply integrated with Google's Gemini models.
 - **Automated Lifecycle**: Powered by Cloud Build for reliable, repeatable deployments.
 - **Local-First & Private**: Self-hosted on your GKE infrastructure for maximum data privacy.
-
 ---
 
 ## 🔥 One-Click OpenClaw Deployment (HOT)
@@ -64,17 +63,15 @@ gcloud org-policies set-policy policy.yaml
 git clone https://github.com/Leisureroad/ai-agent-sandbox-on-gke.git
 cd ai-agent-sandbox-on-gke
 
-gcloud builds submit --config cloudbuild.yaml \
+gcloud builds submit --config ./hermes/cloudbuild.yaml \
   --substitutions=_REGION="$REGION",_ZONE="$ZONE"
-  
-gcloud container clusters get-credentials ai-sandbox-cluster --region $REGION --project $PROJECT_ID
-kubectl port-forward pod/openclaw-sandbox 18789:18789
+
 ```
 
 ### 3. Access the Web UI: Open http://localhost:18789 in your browser.
 
-### 4. Openclaw CLI
-You can run OpenClaw CLI commands directly inside the sandbox container.
+### 4. Hermes CLI
+You can run Hermes CLI commands directly inside the sandbox container.
 ```bash
-kubectl exec -it openclaw-sandbox -- openclaw --help
+kubectl exec -it hermes-sandbox -- hermes --help
 ```

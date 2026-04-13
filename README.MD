@@ -1,231 +1,41 @@
-# AI Agent Sandbox Deployment Solution on GKE
+# AI Agent Sandbox Solutions on GKE (V2 Draft)
 
-This guide provides a consolidated, seamless process to deploy a secure and isolated AI Sandbox environment on Google Kubernetes Engine (GKE).
-
-## 🔥 One-Click OpenClaw Deployment (HOT)
-
-> **Production-Ready & Fully Automated**: This is the fastest way to deploy the entire solution including infrastructure and applications.
-
-### 1. Configure Environment and IAM Permissions
-Run the following script to grant necessary permissions to the service accounts:
-
-```bash
-# Get project info automatically
-export PROJECT_ID=<YOUR_PROJECT_ID>
-
-# Set project and enable required APIs
-gcloud config set project $PROJECT_ID
-gcloud services enable cloudresourcemanager.googleapis.com container.googleapis.com servicenetworking.googleapis.com cloudbuild.googleapis.com compute.googleapis.com file.googleapis.com
-
-export PROJECT_NUMBER=$(gcloud projects list --filter="projectId:$PROJECT_ID" --format="value(projectNumber)")
-export REGION="us-central1"
-export ZONE="us-central1-a"
-
-# Grant necessary roles to the Compute account (required for Infrastructure/GKE management)
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
-    --role="roles/editor"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
-    --role="roles/container.admin"
-```
-
-### Ensure Organization Policy compute.disableNestedVirtualization is Off (Optional)
-```bash
-# Generate the policy file with variable expansion
-cat <<EOF > policy.yaml
-name: projects/$PROJECT_ID/policies/compute.disableNestedVirtualization
-spec:
-  inheritFromParent: false
-  rules:
-  - enforce: false
-EOF
-
-gcloud org-policies set-policy policy.yaml
-```
-
-### 2. Run the Deployment
-```bash
-# Clone and Deploy
-git clone https://github.com/Leisureroad/ai-agent-sandbox-on-gke.git
-cd ai-agent-sandbox-on-gke
-
-gcloud builds submit --config cloudbuild.yaml \
-  --substitutions=_REGION="$REGION",_ZONE="$ZONE"
-  
-gcloud container clusters get-credentials ai-sandbox-cluster --region $REGION --project $PROJECT_ID
-kubectl port-forward pod/openclaw-sandbox 18789:18789
-```
-
-### 3. Access the Web UI: Open http://localhost:18789 in your browser.
-
-### 4. Openclaw CLI
-You can run OpenClaw CLI commands directly inside the sandbox container.
-```bash
-kubectl exec -it openclaw-sandbox -- openclaw --help
-```
+This repository provides three distinct solutions for running AI Agents and Sandboxes on Google Kubernetes Engine (GKE), catering to different use cases from general code execution to enterprise agent assistants.
 
 ---
 
-## Table of Contents
-1. [Prerequisites](#prerequisites)
-2. [Infrastructure Provisioning via Terraform](#infrastructure-provisioning-via-terraform)
-3. [Deployment Scenarios](#deployment-scenarios)
-4. [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway)
-5. [Cleanup](#cleanup)
+## 🗺️ Choose Your Scenario
+
+| Solution | Targeted Use Case | Primary Feature | Deployment Method |
+| :--- | :--- | :--- | :--- |
+| **[General AI Sandbox](./sandbox/README_V2.MD)** | **General Code Execution** | Foundational Infrastructure, Sandbox Router & Gateway, Sandbox warmpool, dynamic claims. | 📖 Step-by-Step Manual |
+| **[OpenClaw Agent](./openclaw/README_V2.MD)** | **AI Agent Assistant** | Visual UI, Multi-tool orchestration, Enterprise-ready. | 🚀 Cloud Build (One-Click) |
+| **[Hermes Agent](./hermes/README_V2.MD)** | **AI Agent Assistant** | 🆕 **Trending!** lightweight & customizable, Cost effiency, Feishu/Lark integration. | 🚀 Cloud Build (One-Click) |
 
 ---
 
-## Prerequisites
+## 🛠️ Common Platform Utilities
 
-Before executing the deployment, ensure your local environment meets the following conditions:
+Across all solutions, our GKE infrastructure provides high-end features that ensure security, performance, and reliability:
 
-- **Tools Installed**: `terraform`, `kubectl`, and `gcloud` CLIs are installed and authenticated.
-- **Python Setup**: Python 3.10+ installed locally for testing the sandbox client.
+### 🛡️ Zero-Secret Security (Workload Identity)
+By integrating **LiteLLM Proxy** with GKE **Workload Identity**, agents authenticate with Vertex AI using Google Service Accounts (GSA) automatically. **No more static API keys in environment variables.**
 
-```bash
-# Set your environment variables
-git clone https://github.com/Leisureroad/ai-agent-sandbox-on-gke.git
-cd ai-agent-sandbox-on-gke
-export ROOT_DIR=$(pwd)
-export PROJECT_ID=<YOUR_PROJECT_ID>
-export REGION=us-central1
-export REPO_NAME=ai-sandbox-repo
+### ⚡ Fast Startup & Cost-Efficiency (GCFS + Pod Snapshot)
+We combine **Image Streaming (GCFS)** with **Pod Snapshots** to achieve near-instant sandbox recovery. **Image Streaming** allows massive images to start execution immediately while data is being pulled in the background, and **Pod Snapshots** dramatically reduce **Pod Resume Latency**. This synergy enables aggressive autoscaling and **Economic Operation**, significantly saving infrastructure costs by only keeping Pods active when needed.
+*Note: Snapshotting currently only supports the **gVisor** runtime.*
 
-# Enable required APIs
-gcloud services enable cloudresourcemanager.googleapis.com container.googleapis.com servicenetworking.googleapis.com cloudbuild.googleapis.com compute.googleapis.com file.googleapis.com
-```
+### 📁 Enterprise Governance & Stability (InitContainer)
+For **Hermes** and **OpenClaw**, we use a robust `initContainer` pattern to initialize configurations on PVCs. This approach empowers SRE teams to **standardize AI Assistant templates**. It lowers the cost of manual configuration and makes **security governance** easier across the organization through standardized, repeatable deployment patterns.
 
 ---
 
-## Infrastructure Provisioning via Terraform
+## 📂 Repository Structure
 
-Instead of manually creating a cluster from the UI, we've provided a Terraform manifest inside the `terraform/` directory. This script performs the following critical configurations out-of-the-box:
-- Provisions the required VPC for the Filestore integration.
-- Enables **Filestore CSI Support** and sets up the **GKE Gateway API** control plane.
-- Creates two dedicated node pools:
-  - `kata-nodepool`: Optimized for **Kata Containers** (running `n2-standard` with *Nested Virtualization* enabled).
-  - `gvisor-nodepool`: Configured to natively utilize the GKE Sandbox with **gVisor** (`sandbox_type = "gvisor"`).
-
-### Run the Infrastructure Build
-
-Navigate to the terraform directory, adjust your variables if necessary, and execute the build.
-
-```bash
-# Initialize the Terraform workspace
-cd $ROOT_DIR/terraform
-terraform init
-
-# Plan and Apply the infrastructure build
-terraform apply -var="project_id=$PROJECT_ID"
-```
-
-Once Terraform completes its run, fetch the credentials so `kubectl` can route the application manifests:
-
-```bash
-# Fetch credentials for the newly created cluster
-gcloud container clusters get-credentials ai-sandbox-cluster --region us-central1 --project <YOUR_PROJECT_ID>
-```
-
-```bash
-# Install Kata Container Support
-export VERSION=$(curl -sSL https://api.github.com/repos/kata-containers/kata-containers/releases/latest | jq .tag_name | tr -d '"')
-export CHART="oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy"
-
-helm install kata-deploy "${CHART}" --version "${VERSION}"
-
-# See everything you can configure
-helm show values "${CHART}" --version "${VERSION}"
-```
----
-
-## Deploy Agent Sandbox Controller & CRDs
-
-```bash
-# Deploy the Agent Sandbox Controller and Extensions
-echo "📦 Deploying Agent Sandbox Controller & CRDs..."
-kubectl apply \
-  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.2.1/manifest.yaml \
-  -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.2.1/extensions.yaml
-
-# Wait for sandbox webhooks/controllers to be successfully established
-echo "⏳ Waiting for Agent Sandbox Webhooks to become available..."
-sleep 15
-kubectl wait --for=condition=Ready=True pod --all -n agent-sandbox-system --timeout=120s  || true
-```
-
-## Deployment Scenarios
-
-Now that your underlying GKE cluster and node pools are provisioned, you have two options for what to deploy:
-
-### 1. Agent Sandbox on GKE
-
-> [!IMPORTANT]
-> ⚠️ **Prerequisite Step**: You must complete the [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway) section **before** you proceed with the following steps.
-
-Deploy a massively scalable, isolated, multi-tenant execution environment where dynamic sandboxes are claimed on demand.
-
-👉 **[Proceed to the Sandbox Deployment Guide](./sandbox/README.MD)**
-
-### 2. Hosted OpenClaw on GKE
-Deploy OpenClaw natively on highly isolated hardware (like Kata/gVisor), giving you a secure, permanent LLM Gateway and agent execution interface.
-
-👉 **[Proceed to the OpenClaw Deployment Guide](./openclaw/README.MD)**
+- [`/terraform`](./terraform): Common GKE Infrastructure (VPC, Node Pools for Kata/gVisor).
+- [`/sandbox`](./sandbox): General AI Sandbox infrastructure, router, and manuals.
+- [`/openclaw`](./openclaw): Automated deployment for the OpenClaw Agent Platform.
+- [`/hermes`](./hermes): Specialized Agent workspace with Feishu robot integration.
 
 ---
-
-## Build Sandbox Router & Deploy Gateway
-
-Before running the deployment script, you'll need to build and push the Sandbox Router Docker image to your container registry. The Sandbox Router acts as a central entry point for all sandbox traffic, routing requests dynamically to the correct sandbox.
-
-### 1. Build the Sandbox Router Image
-
-Before building the image, create an Artifact Registry repository to host it, and configure Docker to authenticate with the registry:
-
-```bash
-# Create the Artifact Registry repository
-gcloud artifacts repositories create $REPO_NAME \
-  --repository-format=docker \
-  --location=$REGION \
-  --description="Docker repository for AI Sandbox images"
-
-# Authenticate Docker with Artifact Registry
-gcloud auth configure-docker ${REGION}-docker.pkg.dev
-
-# Navigate to the Sandbox Router source directory
-cd $ROOT_DIR
-git clone https://github.com/kubernetes-sigs/agent-sandbox.git
-cd agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/
-
-# Build and push the image using Cloud Build
-export SANDBOX_ROUTER_IMG=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/sandbox-router:latest
-gcloud builds submit --tag $SANDBOX_ROUTER_IMG .
-```
-
-### 2. Deploy the Sandbox Router and Gateway
-
-Save the following routine as a deployment script (e.g., `deploy.sh`), or directly copy and run it in your terminal. This script will automatically install the sandbox infrastructure, set up persistent volumes via Filestore, establish the network sandbox router and gateway, and prepare the warm pool instances.
-
-```bash
-# Deploy the Sandbox Router and Gateway
-echo "🔄 Deploying Sandbox Router..."
-sed -i "" "s|IMAGE_PLACEHOLDER|${SANDBOX_ROUTER_IMG}|g" "$ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml"
-kubectl apply -f $ROOT_DIR/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml
-
-echo "🌐 Deploying Gateway Networking (gateway.yaml)..."
-kubectl apply -f $ROOT_DIR/sandbox/gateway.yaml
-
-```
-
----
-
-## Cleanup
-
-To remove all the resources created during this tutorial and avoid any billing charges, run the following cleanup commands:
-
-```bash
-cd $ROOT_DIR/terraform
-terraform destroy
-```
-
+*Built with ❤️ for the AI Agent community on Google Cloud.*

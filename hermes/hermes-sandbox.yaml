@@ -1,0 +1,40 @@
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: hermes-sandbox-gvisor
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: hermes-sandbox-gvisor
+    spec:
+      runtimeClassName: gvisor
+      automountServiceAccountToken: false
+      # 在 Pod 级别统一设置权限上下文
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: hermes
+          image: REGION-docker.pkg.dev/PROJECT_ID/dockerhub/nousresearch/hermes-agent
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args: ["sleep infinity"]
+          volumeMounts:
+            - name: temp-data
+              mountPath: /opt/data
+            - name: config
+              mountPath: /opt/hermes/config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+      volumes:
+        - name: temp-data
+          emptyDir: {}
+        - name: config
+          emptyDir: {}
