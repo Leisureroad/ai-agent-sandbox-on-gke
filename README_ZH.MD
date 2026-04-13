@@ -45,6 +45,3 @@
 - [`/sandbox`](./sandbox): 通用 AI 沙箱基础设施、路由器及操作手册。
 - [`/openclaw`](./openclaw): OpenClaw 代理平台的自动化部署方案。
 - [`/hermes`](./hermes): Hermes 代理的自动化部署方案。
-
----
-*Built with ❤️ for the AI Agent community on Google Cloud.*
