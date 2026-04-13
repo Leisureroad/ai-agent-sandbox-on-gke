@@ -1,7 +1,6 @@
 ## Table of Contents
 1. [Prerequisites](#prerequisites)
 2. [Infrastructure Provisioning via Terraform](#infrastructure-provisioning-via-terraform)
-3. [Deployment Scenarios](#deployment-scenarios)
 4. [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway)
 5. [Deploy AI Agent Sandbox and Test](#deploy-ai-agent-sandbox-and-test)
 6. [Cleanup](#cleanup)
