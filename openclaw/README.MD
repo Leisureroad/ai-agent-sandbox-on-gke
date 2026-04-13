@@ -78,3 +78,38 @@ You can run OpenClaw CLI commands directly inside the sandbox container.
 ```bash
 kubectl exec -it openclaw-sandbox -- openclaw --help
 ```
+
+
+### 5. Verify Pod Snapshot
+```bash
+# Trigger a snapshot manually
+kubectl apply -f - <<EOF
+apiVersion: podsnapshot.gke.io/v1alpha1
+kind: PodSnapshotManualTrigger
+metadata:
+  name: example-manual-trigger
+spec:
+  targetPod: openclaw-sandbox-gvisor
+EOF
+
+# kill openclaw pod
+kubectl delete pod openclaw-sandbox-gvisor
+
+# wait for the pod to be recreated
+kubectl wait --for=condition=ready pod openclaw-sandbox-gvisor --timeout=5m
+
+# check the pod snapshotting status
+kubectl describe pod openclaw-sandbox-gvisor
+
+Events:
+  Type    Reason              Age   From               Message
+  ----    ------              ----  ----               -------
+  Normal  Scheduled           34s   default-scheduler  Successfully assigned default/openclaw-sandbox-gvisor to gke-ai-sandbox-cluste-gvisor-nodepool-d6ee1e94-1dx9
+  Normal  Pulled              31s   kubelet            spec.containers{openclaw}: Container image "us-central1-docker.pkg.dev/flius-test-20/ghcr/openclaw/openclaw:2026.3.23" already present on machine and can be accessed by the pod
+  Normal  Created             31s   kubelet            spec.containers{openclaw}: Container created
+  Normal  GKEPodSnapshotting  28s   gke-pod-snapshots  Successfully restored the pod from PodSnapshot default/9d0ec38b-f6ae-4f87-927a-aac461c61f9d
+  Normal  Started             28s   kubelet            spec.containers{openclaw}: Container started
+```
+
+### 6. OpenClaw Resource Usage
+![OpenClaw Resource Usage Analysis](./Screenshot.png)

@@ -84,6 +84,7 @@ kubectl exec -it hermes-sandbox-gvisor -- hermes chat
 
 ### 5. Verify Pod Snapshot
 ```bash
+# Trigger a snapshot manually
 kubectl apply -f - <<EOF
 apiVersion: podsnapshot.gke.io/v1alpha1
 kind: PodSnapshotManualTrigger
