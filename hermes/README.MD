@@ -3,15 +3,15 @@
 Hermes is an **open-source, self-improving AI agent** developed by Nous Research, designed to "grow with you." Unlike conventional tools, Hermes builds **persistent memory**, creates **reusable skills** from experience, and refines its capabilities over time through a **closed learning loop**.
 
 ## 🌟 Solution Highlights
-- **Full-featured UI**: Manage agents, tools, and conversations.
-- **Vertex AI Native**: Deeply integrated with Google's Gemini models.
-- **Automated Lifecycle**: Powered by Cloud Build for reliable, repeatable deployments.
+- **Closed Learning Loop**: Automatically creates and refines skills based on completed tasks.
+- **Persistent Memory**: Maintains context across sessions using long-term memory retrieval.
+- **Multi-Platform Gateway**: Connects simultaneously to Telegram, Discord, Slack, WhatsApp, and more.
 - **Local-First & Private**: Self-hosted on your GKE infrastructure for maximum data privacy.
 ---
 
-## 🔥 One-Click OpenClaw Deployment (HOT)
+## 🔥 One-Click Hermes Deployment (HOT)
 
-You can now deploy OpenClaw using the dedicated configuration within this directory.
+You can now deploy Hermes using the dedicated configuration within this directory.
 
 ```bash
 # Get project info automatically
@@ -68,7 +68,8 @@ gcloud builds submit --config ./hermes/cloudbuild.yaml \
 
 ```
 
-### 3. Access the Web UI: Open http://localhost:18789 in your browser.
+### 3. Verification
+Verify that the Hermes deployment is successful by checking the Pod status.
 
 ### 4. Hermes CLI
 You can run Hermes CLI commands directly inside the sandbox container.

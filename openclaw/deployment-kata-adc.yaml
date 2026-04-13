@@ -1,0 +1,157 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openclaw-secrets
+type: Opaque
+stringData:
+  # 在此处填写你的 Gemini API Key
+  GEMINI_API_KEY: "<Your Gemini API Key>"
+  # 建议预设一个固定 Token，方便你从外部 UI登录。如果不填，系统会随机生成一个并在日志中打印。
+  OPENCLAW_GATEWAY_TOKEN: "admin-token-123"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+data:
+  openclaw.json: |
+    {
+      "gateway": {
+        "mode": "local",
+        "controlUi": {
+          "allowedOrigins": ["*"]
+        },
+        "bind": "lan",
+        "trustedProxies": ["127.0.0.1"],
+        "auth": {
+          "mode": "token",
+          "token": "admin-token-123"
+        },
+        "remote": {
+          "url": "ws://127.0.0.1:18789",
+          "token": "admin-token-123"
+        }
+      },
+      "agents": {
+        "defaults": {
+          "model": {
+            "primary": "google-vertex/gemini-3.1-pro-preview"
+          }
+        }
+      }
+    }
+  AGENTS.md: |
+    # 欢迎使用 OpenClaw
+    我是运行在 GKE 上的智能助理。我已经准备好使用 Gemini-3 为你服务了。
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openclaw-kata-pvc-deploy
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw-kata
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: openclaw-kata
+  template:
+    metadata:
+      labels:
+        app: openclaw-kata
+    spec:
+      # hostNetwork: true
+      runtimeClassName: kata-clh
+      serviceAccount: ${KSA_NAME}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      initContainers:
+      - name: init-config
+        image: busybox:latest
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+        command:
+        - sh
+        - -c
+        - |
+          # 如果文件不存在，或者文件大小为 0 (空文件)，则执行拷贝
+          if [ ! -s /data/openclaw.json ]; then
+            echo "Config missing or empty. Copying from ConfigMap..."
+            cp /config-source/openclaw.json /data/openclaw.json
+            # 强制将缓存写入磁盘
+            sync
+            echo "Copy complete."
+          else
+            echo "Valid config already exists, skipping."
+          fi
+        volumeMounts:
+        - name: config-source-vol
+          mountPath: /config-source
+        - name: storage
+          mountPath: /data
+
+      containers:
+      - name: gateway
+        image: ghcr.io/openclaw/openclaw
+        ports:
+        - containerPort: 18789
+          name: gateway
+        env:
+        - name: GOOGLE_CLOUD_PROJECT
+          value: "flius-vpc-3"
+        - name: GOOGLE_CLOUD_LOCATION
+          value: "global"
+        # - name: GEMINI_API_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: openclaw-secrets
+        #       key: GEMINI_API_KEY
+        - name: OPENCLAW_GATEWAY_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: OPENCLAW_GATEWAY_TOKEN
+        - name: OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
+          value: "1"
+        - name: OPENCLAW_COMMANDS_RESTART
+          value: 'false'
+        - name: OPENCLAW_NO_RESPAWN
+          value: 'true'
+        - name: OPENCLAW_GATEWAY_CONTROLUI_ALLOWEDORIGINS
+          value: '*'
+        - name: OPENCLAW_GATEWAY_CONTROLUI_ALLOWED_ORIGINS
+          value: '*'
+        - name: OPENCLAW_PLUGINS_ENTRIES_DEVICE_PAIR_CONFIG_AUTOAPPROVEROLE
+          value: 'operator'
+        volumeMounts:
+        - name: storage
+          mountPath: /home/node/.openclaw
+        resources:
+          requests:
+            cpu: "1"
+            memory: "4Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: openclaw-kata-pvc-deploy
+      - name: config-source-vol
+        configMap:
+          name: openclaw-config

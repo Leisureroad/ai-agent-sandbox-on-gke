@@ -1,0 +1,71 @@
+# A ClusterIP Service to provide a stable endpoint for the router pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-router-svc
+spec:
+  type: ClusterIP
+  selector:
+    app: sandbox-router
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80 # 更改为 80，与网关保持一致
+    targetPort: 8080
+---
+# The Deployment to manage and run the router pods.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-router-deployment
+spec:
+  replicas: 1 # Run at least two replicas for high availability
+  selector:
+    matchLabels:
+      app: sandbox-router
+  template:
+    metadata:
+      labels:
+        app: sandbox-router
+    spec:
+      # Ensure pods are spread across different zones for HA
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: sandbox-router
+      containers:
+      - name: router
+        image: us-central1-docker.pkg.dev/flius-test-8/ai-sandbox-repo/sandbox-router:latest
+        imagePullPolicy: Always # 必须放在这里，容器镜像的正下方
+        env:
+        - name: PROXY_TIMEOUT_SECONDS
+          value: "180"
+        - name: DEFAULT_SANDBOX_PORT # 指向沙箱真实的监听端口
+          value: "18789"
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000

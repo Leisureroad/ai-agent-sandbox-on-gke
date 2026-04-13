@@ -85,25 +85,6 @@ echo "⏳ Waiting for Agent Sandbox Webhooks to become available..."
 sleep 15
 kubectl wait --for=condition=Ready=True pod --all -n agent-sandbox-system --timeout=120s  || true
 ```
-
-## Deployment Scenarios
-
-Now that your underlying GKE cluster and node pools are provisioned, you have two options for what to deploy:
-
-### 1. Agent Sandbox on GKE
-
-> [!IMPORTANT]
-> ⚠️ **Prerequisite Step**: You must complete the [Build Sandbox Router & Deploy Gateway](#build-sandbox-router--deploy-gateway) section **before** you proceed with the following steps.
-
-Deploy a massively scalable, isolated, multi-tenant execution environment where dynamic sandboxes are claimed on demand.
-
-👉 **[Proceed to the Sandbox Deployment Guide](./sandbox/README.MD)**
-
-### 2. Hosted OpenClaw on GKE
-Deploy OpenClaw natively on highly isolated hardware (like Kata/gVisor), giving you a secure, permanent LLM Gateway and agent execution interface.
-
-👉 **[Proceed to the OpenClaw Deployment Guide](./openclaw/README.MD)**
-
 ---
 
 ## Build Sandbox Router & Deploy Gateway
