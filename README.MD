@@ -1,4 +1,4 @@
-# AI Agent Sandbox Solutions on GKE (V2 Draft)
+# AI Agent Sandbox Solutions on GKE
 
 This repository provides three distinct solutions for running AI Agents and Sandboxes on Google Kubernetes Engine (GKE), catering to different use cases from general code execution to enterprise agent assistants.
 

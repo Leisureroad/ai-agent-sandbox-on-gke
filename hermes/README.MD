@@ -1,4 +1,4 @@
-# Hermes Agent on GKE (V2 Draft) 🏛️
+# Hermes Agent on GKE 🏛️
 
 Hermes is an **open-source, self-improving AI agent** developed by Nous Research, designed to "grow with you." Unlike conventional tools, Hermes builds **persistent memory**, creates **reusable skills** from experience, and refines its capabilities over time through a **closed learning loop**.
 

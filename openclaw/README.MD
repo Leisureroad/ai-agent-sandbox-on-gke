@@ -1,4 +1,4 @@
-# OpenClaw Agent on GKE (V2 Draft) 🏛️
+# OpenClaw Agent on GKE 🏛️
 
 OpenClaw is an **open-source, self-hosted autonomous AI agent** designed to act as an **agentic interface** that can take direct actions on your behalf. Unlike standard chatbots, OpenClaw can execute shell commands, manage files, and automate web tasks, serving as a persistent, always-on personal assistant.
 
