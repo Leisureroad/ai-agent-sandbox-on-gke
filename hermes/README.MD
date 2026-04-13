@@ -3,9 +3,9 @@
 Hermes is an **open-source, self-improving AI agent** developed by Nous Research, designed to "grow with you." Unlike conventional tools, Hermes builds **persistent memory**, creates **reusable skills** from experience, and refines its capabilities over time through a **closed learning loop**.
 
 ## 🌟 Solution Highlights
-- **Closed Learning Loop**: Automatically creates and refines skills based on completed tasks.
-- **Persistent Memory**: Maintains context across sessions using long-term memory retrieval.
-- **Multi-Platform Gateway**: Connects simultaneously to Telegram, Discord, Slack, WhatsApp, and more.
+- **Full-featured UI**: Manage agents, tools, and conversations.
+- **Vertex AI Native**: Deeply integrated with Google's Gemini models.
+- **Automated Lifecycle**: Powered by Cloud Build for reliable, repeatable deployments.
 - **Local-First & Private**: Self-hosted on your GKE infrastructure for maximum data privacy.
 ---
 
