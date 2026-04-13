@@ -30,6 +30,22 @@ resource "google_artifact_registry_repository" "ghcr_remote" {
   }
 }
 
+# 0.1 Create Remote Artifact Registry for Docker Hub
+resource "google_artifact_registry_repository" "dockerhub_remote" {
+  provider      = google-beta
+  location      = var.region
+  repository_id = "dockerhub"
+  description   = "Remote repository proxy for docker.io"
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+
+  remote_repository_config {
+    docker_repository {
+      public_repository = "DOCKER_HUB"
+    }
+  }
+}
+
 # 1. Create the VPC Network
 resource "google_compute_network" "sandbox_network" {
   name                    = "sandbox-network"

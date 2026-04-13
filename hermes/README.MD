@@ -7,9 +7,11 @@ Hermes is an **open-source, self-improving AI agent** developed by Nous Research
 - **Vertex AI Native**: Deeply integrated with Google's Gemini models.
 - **Automated Lifecycle**: Powered by Cloud Build for reliable, repeatable deployments.
 - **Local-First & Private**: Self-hosted on your GKE infrastructure for maximum data privacy.
+- **Lightweight & Efficient**: Minimal resource footprint (500Mi RAM), perfect for cost-sensitive deployments.
+
 ---
 
-## 🔥 One-Click Hermes Deployment (HOT)
+## 🔥 One-Click Hermes Deployment
 
 You can now deploy Hermes using the dedicated configuration within this directory.
 

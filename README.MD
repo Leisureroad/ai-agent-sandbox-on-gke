@@ -10,7 +10,7 @@ This repository provides three distinct solutions for running AI Agents and Sand
 | :--- | :--- | :--- | :--- |
 | **[General AI Sandbox](./sandbox/README.MD)** | **General Code Execution** | Foundational Infrastructure, Sandbox Router & Gateway, Sandbox warmpool, dynamic claims. | 📖 Step-by-Step Manual |
 | **[OpenClaw Agent](./openclaw/README.MD)** | **AI Agent Assistant** | Visual UI, Multi-tool orchestration, Enterprise-ready. | 🚀 Cloud Build (One-Click) |
-| **[Hermes Agent](./hermes/README.MD)** | **AI Agent Assistant** | 🆕 **Trending!** lightweight & customizable, Cost effiency, Feishu/Lark integration. | 🚀 Cloud Build (One-Click) |
+| **[Hermes Agent](./hermes/README.MD)** | **AI Agent Assistant** | 🆕 **Trending!** Lightweight (Minimal resources), Cost-efficient, Feishu/Lark integration. | 🚀 Cloud Build (One-Click) |
 
 ---
 
@@ -34,8 +34,8 @@ For **Hermes** and **OpenClaw**, we use a robust `initContainer` pattern to init
 
 - [`/terraform`](./terraform): Common GKE Infrastructure (VPC, Node Pools for Kata/gVisor).
 - [`/sandbox`](./sandbox): General AI Sandbox infrastructure, router, and manuals.
-- [`/openclaw`](./openclaw): Automated deployment for the OpenClaw Agent Platform.
-- [`/hermes`](./hermes): Specialized Agent workspace with Feishu robot integration.
+- [`/openclaw`](./openclaw): Automated deployment solution for the OpenClaw Agent.
+- [`/hermes`](./hermes): Automated deployment solution for Hermes Agent.
 
 ---
 *Built with ❤️ for the AI Agent community on Google Cloud.*
