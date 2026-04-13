@@ -8,9 +8,9 @@ This repository provides three distinct solutions for running AI Agents and Sand
 
 | Solution | Targeted Use Case | Primary Feature | Deployment Method |
 | :--- | :--- | :--- | :--- |
-| **[General AI Sandbox](./sandbox/README_V2.MD)** | **General Code Execution** | Foundational Infrastructure, Sandbox Router & Gateway, Sandbox warmpool, dynamic claims. | 📖 Step-by-Step Manual |
-| **[OpenClaw Agent](./openclaw/README_V2.MD)** | **AI Agent Assistant** | Visual UI, Multi-tool orchestration, Enterprise-ready. | 🚀 Cloud Build (One-Click) |
-| **[Hermes Agent](./hermes/README_V2.MD)** | **AI Agent Assistant** | 🆕 **Trending!** lightweight & customizable, Cost effiency, Feishu/Lark integration. | 🚀 Cloud Build (One-Click) |
+| **[General AI Sandbox](./sandbox/README.MD)** | **General Code Execution** | Foundational Infrastructure, Sandbox Router & Gateway, Sandbox warmpool, dynamic claims. | 📖 Step-by-Step Manual |
+| **[OpenClaw Agent](./openclaw/README.MD)** | **AI Agent Assistant** | Visual UI, Multi-tool orchestration, Enterprise-ready. | 🚀 Cloud Build (One-Click) |
+| **[Hermes Agent](./hermes/README.MD)** | **AI Agent Assistant** | 🆕 **Trending!** lightweight & customizable, Cost effiency, Feishu/Lark integration. | 🚀 Cloud Build (One-Click) |
 
 ---
 
