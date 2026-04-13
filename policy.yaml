@@ -1,5 +1,0 @@
-name: projects/flius-test-16/policies/compute.disableNestedVirtualization
-spec:
-  inheritFromParent: false
-  rules:
-  - enforce: false
