@@ -74,5 +74,5 @@ Verify that the Hermes deployment is successful by checking the Pod status.
 ### 4. Hermes CLI
 You can run Hermes CLI commands directly inside the sandbox container.
 ```bash
-kubectl exec -it hermes-sandbox -- hermes --help
+kubectl exec -it hermes-sandbox-gvisor -- hermes --help
 ```
