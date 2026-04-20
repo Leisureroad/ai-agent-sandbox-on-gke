@@ -60,3 +60,6 @@ venv/
 *.key
 *.pem
 credentials.json
+
+test-workspace/
+.agents/

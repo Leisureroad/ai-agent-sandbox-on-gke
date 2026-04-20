@@ -15,7 +15,7 @@ steps:
       # Create GCS bucket for Terraform state if it doesn't exist
       gsutil mb -p ${PROJECT_ID} gs://${PROJECT_ID}-tfstate || true
 
-  - name: "hashicorp/terraform:1.6.0"
+  - name: "hashicorp/terraform"
     id: 'terraform-init'
     dir: "terraform"
     args: [
@@ -24,7 +24,7 @@ steps:
       "-backend-config=prefix=terraform/state"
     ]
   
-  - name: "hashicorp/terraform:1.6.0"
+  - name: "hashicorp/terraform"
     id: 'terraform-apply'
     dir: "terraform"
     args: [
