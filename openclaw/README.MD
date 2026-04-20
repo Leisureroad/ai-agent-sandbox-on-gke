@@ -3,12 +3,21 @@
 OpenClaw is an **open-source, self-hosted autonomous AI agent** designed to act as an **agentic interface** that can take direct actions on your behalf. Unlike standard chatbots, OpenClaw can execute shell commands, manage files, and automate web tasks, serving as a persistent, always-on personal assistant.
 
 ## 🌟 Solution Highlights
-- **Full-featured UI**: Manage agents, tools, and conversations.
+- **Full-featured UI/TUI**: Manage agents, tools, and conversations.
 - **Vertex AI Native**: Deeply integrated with Google's Gemini models.
+- **Production-Ready Scaling with SandboxWarmPool**:
+    *   Transitioned to the **Agent Sandbox Operator** pattern. OpenClaw instances are now managed via `SandboxTemplate` and `SandboxWarmPool`.
+    *   This enables **near-instant agent startup** by maintaining a pool of pre-warmed gVisor sandboxes.
+- **Dynamic Auto-scaling (HPA)**:
+    *   Introduced `HorizontalPodAutoscaler` for the warm pool.
+    *   The pool size now scales dynamically based on real-time demand (using Prometheus metrics), ensuring high availability during peak usage and cost savings during idle time.
+- **Enterprise Observability**:
+    *   Integrated with **Google Cloud Managed Service for Prometheus**.
+    *   Added `PodMonitoring` to track agent controller performance and sandbox lifecycle events.
+- **Advanced Storage & Runtime Security**:
+    *   Enabled **FUSE support in gVisor** for secure, high-performance Cloud Storage integration.
+    *   Agents now use **GCS Fuse** for persistent storage, allowing seamless data persistence across sandbox restarts.
 - **Automated Lifecycle**: Powered by Cloud Build for reliable, repeatable deployments.
-- **Local-First & Private**: Self-hosted on your GKE infrastructure for maximum data privacy.
-
----
 
 ## 🔥 One-Click OpenClaw Deployment (HOT)
 

@@ -3,12 +3,21 @@
 OpenClaw 是一款 **开源、私有化部署的自主 AI 代理**，旨在作为一个 **代理式接口 (Agentic Interface)** 代表您直接执行操作。与标准聊天机器人不同，OpenClaw 可以执行 Shell 命令、管理文件并自动化 Web 任务，作为一个持久且始终在线的个人助理。
 
 ## 🌟 方案亮点
-- **功能完备的 UI**: 管理代理、工具及对话。
+- **功能完备的 UI/TUI**: 管理代理、工具及对话。
 - **Vertex AI 原生支持**: 深度集成 Google Gemini 系列模型。
+- **基于 SandboxWarmPool 的生产级扩展**:
+    *   转向 **Agent Sandbox Operator** 模式。OpenClaw 实例现在通过 `SandboxTemplate` 和 `SandboxWarmPool` 进行管理。
+    *   通过维护预热的 gVisor 沙箱池，实现 **秒级代理启动**。
+- **动态自动缩放 (HPA)**:
+    *   为预热池引入了 `HorizontalPodAutoscaler`。
+    *   池大小现在根据实时需求（使用 Prometheus 指标）动态调整，确保高峰期间的高可用性并在闲置时节省成本。
+- **企业级可观测性**:
+    *   集成了 **Google Cloud Managed Service for Prometheus**。
+    *   添加了 `PodMonitoring` 以追踪代理控制器的性能和沙箱生命周期事件。
+- **高级存储与运行安全性**:
+    *   在 gVisor 中启用了 **FUSE 支持**，实现安全、高性能的 Cloud Storage 集成。
+    *   代理现在使用 **GCS Fuse** 进行持久化存储，允许在沙箱重启后无缝保留数据。
 - **自动化生命周期**: 结合 Cloud Build 实现可靠、可重复的部署。
-- **本地优先与隐私**: 私有化部署于 GKE 基础设施，确保最高级别的数据隐私。
-
----
 
 ## 🔥 OpenClaw 一键部署 (HOT)
 
