@@ -141,6 +141,7 @@ steps:
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     id: 'deploy-pod-monitoring'
     entrypoint: "bash"
+    dir: "openclaw"
     args:
     - "-c"
     - |
@@ -154,7 +155,8 @@ steps:
 
       gcloud projects add-iam-policy-binding projects/${PROJECT_ID} \
         --role roles/monitoring.viewer \
-        --member=principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/custom-metrics/sa/custom-metrics-stackdriver-adapter
+        --member=principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/custom-metrics/sa/custom-metrics-stackdriver-adapter \
+        --condition=None
 
       kubectl apply -f hpa.yaml
     
