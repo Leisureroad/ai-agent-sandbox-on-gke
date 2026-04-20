@@ -126,6 +126,19 @@ resource "google_storage_bucket" "hermes_logs" {
   labels = var.labels
 }
 
+resource "google_project_service" "logging_api" {
+  project            = var.project_id
+  service            = "logging.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service_identity" "logging_identity" {
+  provider = google-beta
+  project  = var.project_id
+  service  = "logging.googleapis.com"
+  depends_on = [google_project_service.logging_api]
+}
+
 resource "google_logging_project_sink" "hermes_gcs" {
   name        = "hermes-logs-to-gcs"
   project     = var.project_id
@@ -142,6 +155,9 @@ resource "google_storage_bucket_iam_member" "log_sink_writer" {
   bucket = google_storage_bucket.hermes_logs.name
   role   = "roles/storage.objectCreator"
   member = google_logging_project_sink.hermes_gcs.writer_identity
+
+  # Ensure the logging identity exists in IAM before granting permissions
+  depends_on = [google_project_service_identity.logging_identity]
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
