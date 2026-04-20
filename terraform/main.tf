@@ -295,7 +295,7 @@ resource "google_service_account_iam_member" "workload_identity_user" {
 
 # 7. Pod Snapshot Infrastructure
 resource "google_storage_bucket" "pod_snapshot_bucket" {
-  name                        = "sandbox-pod-snapshot-${var.project_id}"
+  name                        = "${var.project_id}-sandbox-pod-snapshot"
   location                    = var.region
   uniform_bucket_level_access = true
   
@@ -370,6 +370,24 @@ resource "google_storage_managed_folder_iam_member" "ksa_folder_access" {
   member         = "principal://iam.googleapis.com/projects/${data.google_project.project.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/default/sa/default"
 
   depends_on = [google_container_cluster.sandbox_cluster]
+}
+
+# 8. GCS bucket for Sandbox
+resource "google_storage_bucket" "sandbox_bucket" {
+  name                        = "${var.project_id}-sandbox-bucket"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  
+  # Required for GKE Pod Snapshots
+  hierarchical_namespace {
+    enabled = true
+  }
+
+  soft_delete_policy {
+    retention_duration_seconds = 0
+  }
+
+  force_destroy = true
 }
 
 output "pod_snapshot_bucket_name" {
