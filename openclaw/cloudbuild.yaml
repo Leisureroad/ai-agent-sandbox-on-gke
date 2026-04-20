@@ -80,8 +80,13 @@ steps:
 
       # 2. Annotate the K8s Service Account
       kubectl annotate serviceaccount gemini-app-sa \
-      --namespace default \
-      iam.gke.io/gcp-service-account=vertex-ai-client@${PROJECT_ID}.iam.gserviceaccount.com
+        --namespace default \
+        iam.gke.io/gcp-service-account=vertex-ai-client@${PROJECT_ID}.iam.gserviceaccount.com
+
+      gcloud projects add-iam-policy-binding $PROJECT_ID \
+        --member="serviceAccount:vertex-ai-client@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --role="roles/storage.objectAdmin" \
+        --condition=None
 
   # 6. Deploy OpenClaw
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
