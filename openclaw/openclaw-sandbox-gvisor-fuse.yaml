@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+data:
+  openclaw.json: |
+    {
+      "gateway": {
+        "controlUi": {
+          "dangerouslyAllowHostHeaderOriginFallback": true
+        }
+      },
+      "models": {
+        "providers": {
+          "litellm": {
+            "baseUrl": "http://litellm-service:4000",
+            "apiKey": "sk-litellm-proxy-secret", 
+            "api": "openai-completions",
+            "models": [
+              {
+                "id": "gemini-3.1-flash-lite-preview",
+                "name": "Gemini 3.1 Flash Lite (via LiteLLM)",
+                "reasoning": true,
+                "input": ["text", "image"],
+                "contextWindow": 200000,
+                "maxTokens": 64000
+              }
+            ]
+          }
+        }
+      },
+      "agents": {
+        "defaults": {
+          "model": { 
+            "primary": "litellm/gemini-3.1-flash-lite-preview" 
+          }
+        }
+      },
+    }
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: openclaw-template-gvisor
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: openclaw-sandbox-gvisor
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      runtimeClassName: gvisor
+      automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      serviceAccountName: gemini-app-sa
+      containers:
+        - name: openclaw
+          image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/openclaw/openclaw:2026.3.23
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OPENCLAW_GATEWAY_TOKEN
+              value: "dummy-token-for-sandbox"
+            - name: OPENCLAW_CONFIG_PATH
+              value: "/etc/openclaw/openclaw.json"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              GCS_POD_DIR="/mnt/gcs-storage/pods/${POD_NAME}"
+              
+              mkdir -p "${GCS_POD_DIR}"
+              
+              ln -s "${GCS_POD_DIR}" /home/node/.openclaw
+
+              # export WORKSPACE_DIR="/home/node/.openclaw/workspace/$POD_NAME"
+              # echo "Workspace dir is $WORKSPACE_DIR"
+              # mkdir -p "$WORKSPACE_DIR"
+              # echo "Workspace set to $WORKSPACE_DIR"
+
+              node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
+          ports:
+            - containerPort: 18789
+            - containerPort: 18790
+          volumeMounts:
+            # - mountPath: /home/node/.openclaw/workspace
+            #   name: workspaces-gcs-fuse
+            - mountPath: /mnt/gcs-storage
+              name: gcs-volume
+            - mountPath: /etc/openclaw/openclaw.json
+              name: cm-volume
+              subPath: openclaw.json
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "10m"
+      volumes:
+        # - name: config-volume
+        #   emptyDir: {}
+        - name: cm-volume
+          configMap:
+            name: openclaw-config
+        - name: gcs-volume
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            volumeAttributes:
+              bucketName: PROJECT_ID-sandbox-bucket
+              mountOptions: "implicit-dirs"
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: openclaw-warmpool-gvisor
+  namespace: default
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: openclaw-template-gvisor

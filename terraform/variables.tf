@@ -20,3 +20,15 @@ variable "cluster_name" {
   type        = string
   default     = "ai-sandbox-cluster"
 }
+
+variable "alert_email" {
+  description = "Email address for monitoring alerts. Leave empty to disable alerts."
+  type        = string
+  default     = "youremail@example.com"
+}
+
+variable "labels" {
+  description = "Common labels to apply to all resources"
+  type        = map(string)
+  default     = {}
+}

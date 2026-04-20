@@ -96,6 +96,10 @@ steps:
       sed -i "s/REGION/${_REGION}/g" openclaw-sandbox-gvisor.yaml
       sed -i "s/PROJECT_ID/${PROJECT_ID}/g" openclaw-sandbox-gvisor.yaml
       kubectl apply -f openclaw-sandbox-gvisor.yaml
+
+      sed -i "s/REGION/${_REGION}/g" openclaw-sandbox-gvisor-fuse.yaml
+      sed -i "s/PROJECT_ID/${PROJECT_ID}/g" openclaw-sandbox-gvisor-fuse.yaml
+      kubectl apply -f openclaw-sandbox-gvisor-fuse.yaml
       
   # 7. Configure Pod snapshot 
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
@@ -113,7 +117,7 @@ steps:
       spec:
         snapshotStorageConfig:
           gcs:
-            bucket: "sandbox-pod-snapshot-${PROJECT_ID}"
+            bucket: "${PROJECT_ID}-sandbox-pod-snapshot"
             path: "snapshots"
       EOF
       
@@ -132,5 +136,26 @@ steps:
           type: manual
           postCheckpoint: resume
       EOF
+    
+  # 8. Deploy Pod Monitoring and HPA
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'deploy-pod-monitoring'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      echo "🚀 Deploying Pod Monitoring..."
+      kubectl apply -f podmonitoring.yaml
+
+      kubectl create clusterrolebinding cluster-admin-binding \
+        --clusterrole cluster-admin --user "$(gcloud config get-value account)"
+
+      kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-stackdriver/master/custom-metrics-stackdriver-adapter/deploy/production/adapter_new_resource_model.yaml
+
+      gcloud projects add-iam-policy-binding projects/${PROJECT_ID} \
+        --role roles/monitoring.viewer \
+        --member=principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/custom-metrics/sa/custom-metrics-stackdriver-adapter
+
+      kubectl apply -f hpa.yaml
     
 # Variables are handled via --substitutions at runtime

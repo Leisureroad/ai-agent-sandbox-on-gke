@@ -131,10 +131,15 @@ resource "google_container_cluster" "sandbox_cluster" {
       enabled = true
     }
 
+    gcs_fuse_csi_driver_config {
+      enabled = true
+    }
+
     pod_snapshot_config {
       enabled = true
     }
   }
+
 
   provider = google-beta
 
