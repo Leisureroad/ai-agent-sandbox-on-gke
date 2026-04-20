@@ -9,11 +9,34 @@
      - 粘贴以下 JSON（包含消息读取、发送、机器人能力等核心权限）：
    ```json
 
- {"scopes":{"tenant":["aily:file:read","aily:file:write","application:application.app_message_stats.overview:readonly","application:a
- pplication:self_manage","application:bot.menu:write","cardkit:card:read","cardkit:card:write","contact:user.employee_id:readonly","c
- orehr:file:download","event:ip_list","im:chat.access_event.bot_p2p_chat:read","im:chat.members:bot_access","im:message","im:message.
- group_at_msg:readonly","im:message.p2p_msg:readonly","im:message:readonly","im:message:send_as_bot","im:resource"],"user":["aily:fil
- e:read","im:chat.access_event.bot_p2p_chat:read"]}}
+ {
+  "scopes": {
+    "tenant": [
+      "aily:file:read",
+      "aily:file:write",
+      "application:application.app_message_stats.overview:readonly",
+      "application:application:self_manage",
+      "application:bot.menu:write",
+      "cardkit:card:read",
+      "cardkit:card:write",
+      "contact:user.employee_id:readonly",
+      "corehr:file:download",
+      "event:ip_list",
+      "im:chat.access_event.bot_p2p_chat:read",
+      "im:chat.members:bot_access",
+      "im:message",
+      "im:message.group_at_msg:readonly",
+      "im:message.p2p_msg:readonly",
+      "im:message:readonly",
+      "im:message:send_as_bot",
+      "im:resource"
+    ],
+    "user": [
+      "aily:file:read",
+      "im:chat.access_event.bot_p2p_chat:read"
+    ]
+  }
+}
    ```
  5. 启用机器人：在“应用能力” -> “机器人”中，点击“启用机器人”。
  6. 事件订阅（关键）：

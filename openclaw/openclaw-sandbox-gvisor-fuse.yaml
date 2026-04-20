@@ -57,6 +57,22 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
       serviceAccountName: gemini-app-sa
+      initContainers:
+        - name: init-config
+          image: busybox:latest
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command: ["/bin/sh", "-c"]
+          args: ["mkdir -p /mnt/gcs-storage/pods/${POD_NAME} && cp /tmp/openclaw.json /mnt/gcs-storage/pods/${POD_NAME}/openclaw.json"]
+          volumeMounts:
+            - mountPath: /mnt/gcs-storage
+              name: gcs-volume
+            - name: cm-volume
+              mountPath: /tmp/openclaw.json
+              subPath: openclaw.json
       containers:
         - name: openclaw
           image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/openclaw/openclaw:2026.3.23
@@ -68,41 +84,31 @@ spec:
             - name: OPENCLAW_GATEWAY_TOKEN
               value: "dummy-token-for-sandbox"
             - name: OPENCLAW_CONFIG_PATH
-              value: "/etc/openclaw/openclaw.json"
+              value: "/home/node/.openclaw/openclaw.json"
+            - name: OPENCLAW_COMMANDS_RESTART
+              value: 'false'
+            - name: OPENCLAW_NO_RESPAWN
+              value: 'true'
           command:
             - /bin/sh
             - -c
             - |
+              mkdir -p /home/node/.openclaw
               GCS_POD_DIR="/mnt/gcs-storage/pods/${POD_NAME}"
-              
-              mkdir -p "${GCS_POD_DIR}"
-              
               ln -s "${GCS_POD_DIR}" /home/node/.openclaw
-
-              # export WORKSPACE_DIR="/home/node/.openclaw/workspace/$POD_NAME"
-              # echo "Workspace dir is $WORKSPACE_DIR"
-              # mkdir -p "$WORKSPACE_DIR"
-              # echo "Workspace set to $WORKSPACE_DIR"
-
+              cp /mnt/gcs-storage/pods/${POD_NAME}/openclaw.json /home/node/.openclaw/openclaw.json
               node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
           ports:
             - containerPort: 18789
             - containerPort: 18790
           volumeMounts:
-            # - mountPath: /home/node/.openclaw/workspace
-            #   name: workspaces-gcs-fuse
             - mountPath: /mnt/gcs-storage
               name: gcs-volume
-            - mountPath: /etc/openclaw/openclaw.json
-              name: cm-volume
-              subPath: openclaw.json
           resources:
             requests:
               cpu: "10m"
               memory: "10m"
       volumes:
-        # - name: config-volume
-        #   emptyDir: {}
         - name: cm-volume
           configMap:
             name: openclaw-config
