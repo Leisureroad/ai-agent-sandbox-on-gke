@@ -9,12 +9,15 @@ spec:
     kind: SandboxWarmPool
     name: openclaw-warmpool-gvisor
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 100
   metrics:
   - type: External
     external:
       metric:
         name: "prometheus.googleapis.com|agent_sandbox_claim_creation_total|counter"
+        selector:
+          matchLabels:
+            app: agent-sandbox-controller
       target:
         type: Value
         value: 0.5
