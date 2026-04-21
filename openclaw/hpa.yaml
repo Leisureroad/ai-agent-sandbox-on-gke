@@ -17,7 +17,7 @@ spec:
         name: "prometheus.googleapis.com|agent_sandbox_claim_creation_total|counter"
         selector:
           matchLabels:
-            app: agent-sandbox-controller
+            metric.labels.warmpool_name: "openclaw-warmpool-gvisor"
       target:
         type: Value
         value: 0.5

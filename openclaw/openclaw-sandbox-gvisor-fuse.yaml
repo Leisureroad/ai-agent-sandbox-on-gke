@@ -124,6 +124,9 @@ kind: SandboxWarmPool
 metadata:
   name: openclaw-warmpool-gvisor
   namespace: default
+  labels:
+    sandbox: openclaw-warmpool-gvisor
+
 spec:
   replicas: 1
   sandboxTemplateRef:
