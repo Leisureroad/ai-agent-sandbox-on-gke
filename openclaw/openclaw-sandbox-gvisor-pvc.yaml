@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+data:
+  openclaw.json: |
+    {
+      "gateway": {
+        "controlUi": {
+          "dangerouslyAllowHostHeaderOriginFallback": true
+        }
+      },
+      "models": {
+        "providers": {
+          "litellm": {
+            "baseUrl": "http://litellm-service:4000",
+            "apiKey": "sk-litellm-proxy-secret", 
+            "api": "openai-completions",
+            "models": [
+              {
+                "id": "gemini-3.1-flash-lite-preview",
+                "name": "Gemini 3.1 Flash Lite (via LiteLLM)",
+                "reasoning": true,
+                "input": ["text", "image"],
+                "contextWindow": 200000,
+                "maxTokens": 64000
+              }
+            ]
+          }
+        }
+      },
+      "agents": {
+        "defaults": {
+          "model": { 
+            "primary": "litellm/gemini-3.1-flash-lite-preview" 
+          }
+        }
+      },
+    }
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: openclaw-template-gvisor-pvc
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: openclaw-sandbox-gvisor-pvc
+    spec:
+      runtimeClassName: gvisor
+      automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      serviceAccountName: gemini-app-sa
+      initContainers:
+        - name: init-config
+          image: busybox:latest
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command: ["/bin/sh", "-c"]
+          args: ["mkdir -p /mnt/data/pods/${POD_NAME} && cp /tmp/openclaw.json /mnt/data/pods/${POD_NAME}/openclaw.json"]
+          volumeMounts:
+            - mountPath: /mnt/data
+              name: openclaw-pvc-volume
+            - name: cm-volume
+              mountPath: /tmp/openclaw.json
+              subPath: openclaw.json
+      containers:
+        - name: openclaw
+          image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/openclaw/openclaw:2026.3.23
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OPENCLAW_GATEWAY_TOKEN
+              value: "dummy-token-for-sandbox"
+            - name: OPENCLAW_CONFIG_PATH
+              value: "/home/node/.openclaw/openclaw.json"
+            - name: OPENCLAW_COMMANDS_RESTART
+              value: 'false'
+            - name: OPENCLAW_NO_RESPAWN
+              value: 'true'
+          command:
+            - /bin/sh
+            - -c
+            - |
+              mkdir -p /home/node/.openclaw
+              PVC_POD_DIR="/mnt/data/pods/${POD_NAME}"
+              ln -s "${PVC_POD_DIR}" /home/node/.openclaw
+              cp /mnt/data/pods/${POD_NAME}/openclaw.json /home/node/.openclaw/openclaw.json
+              node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
+          ports:
+            - containerPort: 18789
+            - containerPort: 18790
+          volumeMounts:
+            - mountPath: /mnt/data
+              name: openclaw-pvc-volume
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "10m"
+      volumes:
+        - name: cm-volume
+          configMap:
+            name: openclaw-config
+        - name: openclaw-pvc-volume
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                storageClassName: "standard-rwo"
+                resources:
+                  requests:
+                    storage: 10Gi
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: openclaw-warmpool-gvisor-pvc
+  namespace: default
+  labels:
+    sandbox: openclaw-warmpool-gvisor-pvc
+
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: openclaw-template-gvisor-pvc
