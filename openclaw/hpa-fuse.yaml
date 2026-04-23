@@ -1,7 +1,7 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: agent-warmpool-hpa
+  name: agent-warmpool-hpa-fuse
   namespace: default # Namespace of the SandboxWarmPool
 spec:
   scaleTargetRef:
