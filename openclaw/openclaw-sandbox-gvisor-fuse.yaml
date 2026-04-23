@@ -76,10 +76,6 @@ spec:
       containers:
         - name: openclaw
           image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/openclaw/openclaw:2026.3.23
-          lifecycle:
-            preStop:
-              exec:
-                command: ["/bin/sh", "-c", "pkill node || killall node || true"]
           env:
             - name: POD_NAME
               valueFrom:
@@ -101,7 +97,7 @@ spec:
               GCS_POD_DIR="/mnt/gcs-storage/pods/${POD_NAME}"
               ln -s "${GCS_POD_DIR}" /home/node/.openclaw
               cp /mnt/gcs-storage/pods/${POD_NAME}/openclaw.json /home/node/.openclaw/openclaw.json
-              node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
+              exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
           ports:
             - containerPort: 18789
             - containerPort: 18790

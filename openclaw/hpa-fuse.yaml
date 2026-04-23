@@ -7,7 +7,7 @@ spec:
   scaleTargetRef:
     apiVersion: extensions.agents.x-k8s.io/v1alpha1
     kind: SandboxWarmPool
-    name: openclaw-template-gvisor-pvc
+    name: openclaw-warmpool-gvisor-fuse
   minReplicas: 1
   maxReplicas: 100
   metrics:
@@ -17,7 +17,7 @@ spec:
         name: "prometheus.googleapis.com|agent_sandbox_claim_creation_total|counter"
         selector:
           matchLabels:
-            metric.labels.warmpool_name: "openclaw-warmpool-gvisor-pvc"
+            metric.labels.warmpool_name: "openclaw-warmpool-gvisor-fuse"
       target:
         type: Value
-        value: 0.5
+        value: 0.1

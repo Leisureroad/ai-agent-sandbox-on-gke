@@ -95,7 +95,7 @@ spec:
               PVC_POD_DIR="/mnt/data/pods/${POD_NAME}"
               ln -s "${PVC_POD_DIR}" /home/node/.openclaw
               cp /mnt/data/pods/${POD_NAME}/openclaw.json /home/node/.openclaw/openclaw.json
-              node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
+              exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
           ports:
             - containerPort: 18789
             - containerPort: 18790
