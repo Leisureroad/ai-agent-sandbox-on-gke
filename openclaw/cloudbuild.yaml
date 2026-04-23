@@ -98,13 +98,14 @@ steps:
     - |
       echo "🚀 Deploying OpenClaw components..."
       kubectl apply -f litellm-deployment.yaml
-      # sed -i "s/REGION/${_REGION}/g" openclaw-sandbox-gvisor.yaml
-      # sed -i "s/PROJECT_ID/${PROJECT_ID}/g" openclaw-sandbox-gvisor.yaml
-      # kubectl apply -f openclaw-sandbox-gvisor.yaml
 
       sed -i "s/REGION/${_REGION}/g" openclaw-sandbox-gvisor-fuse.yaml
       sed -i "s/PROJECT_ID/${PROJECT_ID}/g" openclaw-sandbox-gvisor-fuse.yaml
       kubectl apply -f openclaw-sandbox-gvisor-fuse.yaml
+
+      sed -i "s/REGION/${_REGION}/g" openclaw-sandbox-gvisor-pvc.yaml
+      sed -i "s/PROJECT_ID/${PROJECT_ID}/g" openclaw-sandbox-gvisor-pvc.yaml
+      kubectl apply -f openclaw-sandbox-gvisor-pvc.yaml
       
   # 7. Configure Pod snapshot 
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
@@ -163,6 +164,7 @@ steps:
         --member=principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/custom-metrics/sa/custom-metrics-stackdriver-adapter \
         --condition=None
 
-      kubectl apply -f hpa.yaml
+      kubectl apply -f hpa-fuse.yaml
+      kubectl apply -f hpa-pvc.yaml
     
 # Variables are handled via --substitutions at runtime
