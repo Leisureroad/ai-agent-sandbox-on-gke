@@ -46,7 +46,7 @@ spec:
   podTemplate:
     metadata:
       labels:
-        sandbox: openclaw-sandbox-gvisor-pvc
+        sandbox: openclaw-template-gvisor-pvc
     spec:
       runtimeClassName: gvisor
       automountServiceAccountToken: true
@@ -127,7 +127,6 @@ metadata:
   namespace: default
   labels:
     sandbox: openclaw-warmpool-gvisor-pvc
-
 spec:
   replicas: 1
   sandboxTemplateRef:

@@ -41,12 +41,12 @@ data:
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
 metadata:
-  name: openclaw-template-gvisor
+  name: openclaw-template-gvisor-fuse
 spec:
   podTemplate:
     metadata:
       labels:
-        sandbox: openclaw-sandbox-gvisor
+        sandbox: openclaw-template-gvisor-fuse
       annotations:
         gke-gcsfuse/volumes: "true"
     spec:
@@ -76,6 +76,10 @@ spec:
       containers:
         - name: openclaw
           image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/openclaw/openclaw:2026.3.23
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "pkill node || killall node || true"]
           env:
             - name: POD_NAME
               valueFrom:
@@ -122,12 +126,12 @@ spec:
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxWarmPool
 metadata:
-  name: openclaw-warmpool-gvisor
+  name: openclaw-warmpool-gvisor-fuse
   namespace: default
   labels:
-    sandbox: openclaw-warmpool-gvisor
+    sandbox: openclaw-warmpool-gvisor-fuse
 
 spec:
   replicas: 1
   sandboxTemplateRef:
-    name: openclaw-template-gvisor
+    name: openclaw-template-gvisor-fuse
