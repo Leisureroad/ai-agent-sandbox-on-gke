@@ -1,0 +1,112 @@
+timeout: 1800s
+options:
+  machineType: "E2_HIGHCPU_8"
+  logging: CLOUD_LOGGING_ONLY
+  substitution_option: "ALLOW_LOOSE"
+
+substitutions:
+  _REGION: "us-central1"
+  _REPO_NAME: "demo-agent-repo" # Artifact Registry repository name
+  _SERVICE_NAME: "demo-agent"
+  _SA_NAME: "demo-agent-sa"
+
+steps:
+  # 0. Prepare Service Account and IAM Permissions
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'prepare-iam'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      echo "🔐 Preparing Service Account and IAM bindings..."
+      SA_EMAIL="${_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+      
+      # Create Service Account if it doesn't exist
+      if ! gcloud iam service-accounts describe $${SA_EMAIL} --project=${PROJECT_ID} >/dev/null 2>&1; then
+        echo "Creating Service Account: $${SA_NAME}"
+        gcloud iam service-accounts create ${_SA_NAME} \
+          --display-name="GKE Sandbox Demo Agent Service Account" \
+          --project=${PROJECT_ID}
+      else
+        echo "Service Account $${SA_NAME} already exists."
+      fi
+      
+      echo "Granting roles/container.developer (GKE access)..."
+      gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+        --member="serviceAccount:$${SA_EMAIL}" \
+        --role="roles/container.developer" \
+        --condition=None
+        
+      echo "Granting roles/aiplatform.user (Vertex AI access)..."
+      gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+        --member="serviceAccount:$${SA_EMAIL}" \
+        --role="roles/aiplatform.user" \
+        --condition=None
+
+  # 1. Create Artifact Registry Repository if it doesn't exist
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'create-artifact-repo'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      echo "📦 Checking Artifact Registry repository..."
+      if ! gcloud artifacts repositories describe ${_REPO_NAME} --location=${_REGION} --project=${PROJECT_ID} >/dev/null 2>&1; then
+        echo "Creating Artifact Registry repository: ${_REPO_NAME}"
+        gcloud artifacts repositories create ${_REPO_NAME} \
+          --repository-format=docker \
+          --location=${_REGION} \
+          --description="Docker repository for GKE Sandbox Demo Agent" \
+          --project=${PROJECT_ID}
+      else
+        echo "Repository ${_REPO_NAME} already exists."
+      fi
+
+  # 2. Build Docker Image
+  - name: "gcr.io/cloud-builders/docker"
+    id: 'build-image'
+    args: [
+      "build",
+      "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}:latest",
+      "-f", "demo_agent/Dockerfile",
+      "."
+    ]
+
+  # 3. Push Docker Image to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    id: 'push-image'
+    args: [
+      "push",
+      "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}:latest"
+    ]
+
+  # 4. Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: 'deploy-to-cloud-run'
+    entrypoint: "bash"
+    args:
+    - "-c"
+    - |
+      echo "🚀 Deploying to Cloud Run..."
+      IMAGE_URI="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}:latest"
+      SA_EMAIL="${_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+      
+      gcloud run deploy ${_SERVICE_NAME} \
+        --image=$${IMAGE_URI} \
+        --region=${_REGION} \
+        --platform=managed \
+        --allow-unauthenticated \
+        --set-env-vars=PROJECT_ID=${PROJECT_ID},REGION=${_REGION} \
+        --service-account=$${SA_EMAIL} \
+        --project=${PROJECT_ID} \
+        --timeout=300 \
+        --memory=1Gi \
+        --cpu=1
+      
+      echo "================================================="
+      echo "🎉 Deployment Successful!"
+      echo "URL: $$(gcloud run services describe ${_SERVICE_NAME} --region=${_REGION} --format='value(status.url)')/dev-ui/"
+      echo "================================================="
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}:latest"
