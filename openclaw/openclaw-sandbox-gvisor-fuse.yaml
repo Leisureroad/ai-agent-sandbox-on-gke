@@ -40,84 +40,87 @@ data:
 ---
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
-metadata:
-  name: openclaw-template-gvisor-fuse
-spec:
-  podTemplate:
-    metadata:
+metadata:                                                                                                                                                                                                                                     
+  name: openclaw-template-gvisor-fuse                                                                                                                                                                                                         
+  namespace: default                                                                                                                                                                                                                          
+spec:                                   
+  envVarsInjectionPolicy: Disallowed                                                                                                                                                                                                          
+  networkPolicyManagement: Managed                                                                                                                                                                                                            
+  podTemplate:                                                                                                                                                                                                                                
+    metadata:                                                                                                                                                                                                                                 
+      annotations:                                                                                                                                                                                                                            
+        gke-gcsfuse/volumes: "true"     
+        gke-gcsfuse/ephemeral-storage-request: "100Mi"                                                                                                                                                                                        
       labels:
-        sandbox: openclaw-template-gvisor-fuse
-      annotations:
-        gke-gcsfuse/volumes: "true"
-    spec:
-      runtimeClassName: gvisor
-      automountServiceAccountToken: true
+        sandbox: openclaw-template-gvisor-fuse                                                                                                                                                                                                
+    spec:                                                                                                                                                                                                                                     
+      automountServiceAccountToken: true                                                                                                                                                                                                      
+      containers:                                                                                                                                                                                                                             
+      - command:                                                                                                                                                                                                                              
+        - /bin/sh                       
+        - -c                                                                                                                                                                                                                                  
+        - |                             
+          mkdir -p /mnt/gcs-storage/pods/${POD_NAME}                                                                                                                                                                                          
+          cp /tmp/openclaw.json /mnt/gcs-storage/pods/${POD_NAME}/openclaw.json                                                                                                                                                               
+          mkdir -p /home/node/.openclaw                                                                                                                                                                                                       
+          GCS_POD_DIR="/mnt/gcs-storage/pods/${POD_NAME}"                                                                                                                                                                                     
+          ln -s "${GCS_POD_DIR}" /home/node/.openclaw                                                                                                                                                                                         
+          cp /mnt/gcs-storage/pods/${POD_NAME}/openclaw.json /home/node/.openclaw/openclaw.json                                                                                                                                               
+          exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose                                                                                                                                              
+        env:                                                                                                                                                                                                                                  
+        - name: POD_NAME                                                                                                                                                                                                                      
+          valueFrom:                    
+            fieldRef:                                                                                                                                                                                                                         
+              fieldPath: metadata.name
+        - name: OPENCLAW_GATEWAY_TOKEN                                                                                                                                                                                                        
+          value: dummy-token-for-sandbox                                                                                                                                                                                                      
+        - name: OPENCLAW_CONFIG_PATH                                                                                                                                                                                                          
+          value: /home/node/.openclaw/openclaw.json                                                                                                                                                                                           
+        - name: OPENCLAW_COMMANDS_RESTART
+          value: "false"                                                                                                                                                                                                                      
+        - name: OPENCLAW_NO_RESPAWN
+          value: "true"                                                                                                                                                                                                                       
+        image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/openclaw/openclaw:2026.3.23                                                                                                                                                      
+        lifecycle:                                                                                                                                                                                                                            
+          preStop:                                                                                                                                                                                                                            
+            exec:                                                                                                                                                                                                                             
+              command:                  
+              - /bin/sh
+              - -c                                                                                                                                                                                                                            
+              - umount -l /mnt/gcs-storage || true; pkill -9 node || killall -9 node || true
+        name: openclaw                                                                                                                                                                                                                        
+        ports:                          
+        - containerPort: 18789                                                                                                                                                                                                                
+          protocol: TCP                                                                                                                                                                                                                       
+        - containerPort: 18790
+          protocol: TCP                                                                                                                                                                                                                       
+        resources:                      
+          requests:
+            cpu: 10m
+            memory: 10m
+        volumeMounts:                                                                                                                                                                                                                         
+        - mountPath: /mnt/gcs-storage
+          name: gcs-volume                                                                                                                                                                                                                    
+        - mountPath: /tmp/openclaw.json 
+          name: cm-volume                                                                                                                                                                                                                     
+          subPath: openclaw.json        
+      terminationGracePeriodSeconds: 1
+      runtimeClassName: gvisor                                                                                                                                                                                                                
       securityContext:
+        fsGroup: 1000                                                                                                                                                                                                                         
+        runAsGroup: 1000                                                                                                                                                                                                                      
         runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
-      serviceAccountName: gemini-app-sa
-      initContainers:
-        - name: init-config
-          image: busybox:latest
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-          command: ["/bin/sh", "-c"]
-          args: ["mkdir -p /mnt/gcs-storage/pods/${POD_NAME} && cp /tmp/openclaw.json /mnt/gcs-storage/pods/${POD_NAME}/openclaw.json"]
-          volumeMounts:
-            - mountPath: /mnt/gcs-storage
-              name: gcs-volume
-            - name: cm-volume
-              mountPath: /tmp/openclaw.json
-              subPath: openclaw.json
-      containers:
-        - name: openclaw
-          image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/openclaw/openclaw:2026.3.23
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: OPENCLAW_GATEWAY_TOKEN
-              value: "dummy-token-for-sandbox"
-            - name: OPENCLAW_CONFIG_PATH
-              value: "/home/node/.openclaw/openclaw.json"
-            - name: OPENCLAW_COMMANDS_RESTART
-              value: 'false'
-            - name: OPENCLAW_NO_RESPAWN
-              value: 'true'
-          command:
-            - /bin/sh
-            - -c
-            - |
-              mkdir -p /home/node/.openclaw
-              GCS_POD_DIR="/mnt/gcs-storage/pods/${POD_NAME}"
-              ln -s "${GCS_POD_DIR}" /home/node/.openclaw
-              cp /mnt/gcs-storage/pods/${POD_NAME}/openclaw.json /home/node/.openclaw/openclaw.json
-              exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
-          ports:
-            - containerPort: 18789
-            - containerPort: 18790
-          volumeMounts:
-            - mountPath: /mnt/gcs-storage
-              name: gcs-volume
-          resources:
-            requests:
-              cpu: "10m"
-              memory: "10m"
-      volumes:
-        - name: cm-volume
-          configMap:
-            name: openclaw-config
-        - name: gcs-volume
-          csi:
-            driver: gcsfuse.csi.storage.gke.io
-            volumeAttributes:
-              bucketName: PROJECT_ID-sandbox-bucket
-              mountOptions: "implicit-dirs"
+      serviceAccountName: gemini-app-sa                                                                                                                                                                                                       
+      volumes:                          
+      - configMap:                                                                                                                                                                                                                            
+          name: openclaw-config
+        name: cm-volume                                                                                                                                                                                                                       
+      - csi:                            
+          driver: gcsfuse.csi.storage.gke.io
+          volumeAttributes:                                                                                                                                                                                                                   
+            bucketName: PROJECT_ID-sandbox-bucket
+            mountOptions: implicit-dirs                                                                                                                                                                                                       
+        name: gcs-volume
 ---
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxWarmPool
