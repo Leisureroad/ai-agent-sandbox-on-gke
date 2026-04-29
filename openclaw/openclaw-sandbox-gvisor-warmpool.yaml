@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+data:
+  openclaw.json: |
+    {
+      "gateway": {
+        "controlUi": {
+          "dangerouslyAllowHostHeaderOriginFallback": true
+        }
+      },
+      "models": {
+        "providers": {
+          "litellm": {
+            "baseUrl": "http://litellm-service:4000",
+            "apiKey": "sk-litellm-proxy-secret", 
+            "api": "openai-completions",
+            "models": [
+              {
+                "id": "gemini-3.1-flash-lite-preview",
+                "name": "Gemini 3.1 Flash Lite (via LiteLLM)",
+                "reasoning": true,
+                "input": ["text", "image"],
+                "contextWindow": 200000,
+                "maxTokens": 64000
+              }
+            ]
+          }
+        }
+      },
+      "agents": {
+        "defaults": {
+          "model": { 
+            "primary": "litellm/gemini-3.1-flash-lite-preview" 
+          }
+        }
+      },
+    }
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: openclaw-sandbox-gvisor
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: openclaw-sandbox-gvisor
+    spec:
+      runtimeClassName: gvisor
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: openclaw
+          # image: ghcr.io/openclaw/openclaw:2026.3.23
+          image: REGION-docker.pkg.dev/PROJECT_ID/ghcr/openclaw/openclaw:2026.3.23
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: OPENCLAW_GATEWAY_TOKEN
+              value: "dummy-token-for-sandbox"
+            - name: OPENCLAW_CONFIG_PATH
+              value: "/etc/openclaw/openclaw.json"
+          command:
+            - node
+            - dist/index.js
+            - gateway
+            - --bind=lan
+            - --port
+            - "18789"
+            - --allow-unconfigured
+            - --verbose
+          ports:
+            - containerPort: 18789
+            - containerPort: 18790
+          volumeMounts:
+            - mountPath: /home/node/.openclaw/workspace
+              name: workspaces-pvc
+            - mountPath: /home/node/.openclaw
+              name: config-volume
+            - mountPath: /etc/openclaw/openclaw.json
+              name: cm-volume
+              subPath: openclaw.json
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+      volumes:
+        - name: config-volume
+          emptyDir: {}
+        - name: cm-volume
+          configMap:
+            name: openclaw-config
+        - name: workspaces-pvc
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                storageClassName: "standard-rwo"
+                resources:
+                  requests:
+                    storage: 10Gi
+  # volumeClaimTemplates:
+  #   - metadata:
+  #       name: workspaces-pvc
+  #     spec:
+  #       accessModes:
+  #         - ReadWriteOnce
+  #       resources:
+  #         requests:
+  #           storage: 2Gi
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: openclaw-sandbox-gvisor-warmpool
+  namespace: default
+  labels:
+    sandbox: openclaw-sandbox-gvisor-warmpool
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: openclaw-sandbox-gvisor

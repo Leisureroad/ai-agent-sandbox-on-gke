@@ -147,40 +147,78 @@ spec:
 # Global state for HPA Load Test
 
 _hpa_executor = None
+_hpa_master_thread = None
 _hpa_stop_event = None
 _hpa_start_time = None
 _hpa_history = []
-_hpa_num_sandboxes = 0
-_hpa_duration = 0
+_hpa_rps = 1.0
+_hpa_hold_time = 15.0
+_hpa_creation_duration = 120
+_hpa_phase = "Idle"
+_hpa_load_duration = 0
+_hpa_cooldown_duration = 0
+_hpa_claims_created = 0
 
 def _get_hpa_status_internal():
+    import json
     hpa_name = "agent-warmpool-hpa-fuse"
     pool_name = "openclaw-warmpool-gvisor-fuse"
     
-    hpa_out = _run_cmd(f"kubectl get hpa {hpa_name} -o jsonpath='{{.status.currentReplicas}} {{.status.desiredReplicas}} {{.status.currentMetrics[0].external.current.value}}'")
-    pool_out = _run_cmd(f"kubectl get sandboxwarmpool {pool_name} -o jsonpath='{{.status.replicas}} {{.status.readyReplicas}}'")
+    hpa_out = _run_cmd(f"kubectl get hpa {hpa_name} -o json")
+    pool_out = _run_cmd(f"kubectl get sandboxwarmpool {pool_name} -o json")
     
     if "❌" in hpa_out or "❌" in pool_out or not hpa_out or not pool_out:
         return "N/A", "N/A", "N/A", "N/A"
         
-    h_parts = hpa_out.split()
-    p_parts = pool_out.split()
-    
-    c_rep = h_parts[0] if len(h_parts) > 0 else "0"
-    d_rep = h_parts[1] if len(h_parts) > 1 else "0"
-    met = h_parts[2] if len(h_parts) > 2 else "N/A"
-    
-    w_rep = p_parts[0] if len(p_parts) > 0 else "0"
-    w_ready = p_parts[1] if len(p_parts) > 1 else "0"
-    
-    return met, d_rep, w_rep, w_ready
+    try:
+        hpa_data = json.loads(hpa_out)
+        pool_data = json.loads(pool_out)
+        
+        c_rep = str(hpa_data.get("status", {}).get("currentReplicas", "0"))
+        d_rep = str(hpa_data.get("status", {}).get("desiredReplicas", "0"))
+        
+        met = "N/A"
+        metrics = hpa_data.get("status", {}).get("currentMetrics", [])
+        if metrics and len(metrics) > 0:
+            ext = metrics[0].get("external", {})
+            if ext:
+                curr = ext.get("current", {})
+                if "value" in curr:
+                    met = str(curr["value"])
+                elif "averageValue" in curr:
+                    met = str(curr["averageValue"])
+        
+        w_rep = str(pool_data.get("status", {}).get("replicas", "0"))
+        w_ready = str(pool_data.get("status", {}).get("readyReplicas", "0"))
+        
+        return met, d_rep, w_rep, w_ready
+    except Exception:
+        return "N/A", "N/A", "N/A", "N/A"
 
-def _hpa_load_worker_internal(idx, stop_event, start_time, duration):
+def _hpa_test_master_loop(rps, hold_time, creation_duration, stop_event):
+    global _hpa_history, _hpa_phase, _hpa_start_time
+    
+    _hpa_phase = "Load"
+    _hpa_start_time = time.time()
+    _hpa_history = []
+    
+    # Record initial state
+    met, d_rep, w_rep, w_ready = _get_hpa_status_internal()
+    _hpa_history.append((0, met, d_rep, w_rep, w_ready))
+    
+    initial_replicas = _run_cmd("kubectl get sandboxwarmpool openclaw-warmpool-gvisor-fuse -o jsonpath='{.spec.replicas}'")
+    try:
+        initial_replicas = int(initial_replicas)
+    except:
+        initial_replicas = 1
+        
+    claims_created = 0
+    last_status_time = _hpa_start_time
+    
     template_name = "openclaw-template-gvisor-fuse"
     from k8s_agent_sandbox import SandboxClient
     from k8s_agent_sandbox.models import SandboxGatewayConnectionConfig
     
-    client = None
     try:
         client = SandboxClient(
             connection_config=SandboxGatewayConnectionConfig(
@@ -189,235 +227,333 @@ def _hpa_load_worker_internal(idx, stop_event, start_time, duration):
             )
         )
     except Exception:
+        _hpa_phase = "Error"
         return
         
-    while not stop_event.is_set() and (time.time() - start_time < duration):
-        sandbox = None
-        try:
-            sandbox = client.create_sandbox(template=template_name, namespace="default")
-            sandbox.run("echo 'OpenClaw Load Test' && sleep 5")
-            time.sleep(15)
-        except Exception:
-            time.sleep(2)
-        finally:
-            if sandbox:
-                try:
-                    client.delete_sandbox(sandbox.claim_name)
-                except Exception:
-                    pass
-
-def run_hpa_load_test_start(num_sandboxes: int = 15, duration_seconds: int = 120, confirmed: bool = False) -> str:
-    """
-    Starts the HPA elastic scaling load test by generating heavy concurrent load in the background.
-    MUST be confirmed by the user first.
-    
-    Args:
-        num_sandboxes: Number of concurrent sandboxes to claim. Default is 15.
-        duration_seconds: Duration of the test in seconds. Default is 120.
-        confirmed: Must be True to run.
-        
-    Returns:
-        A message indicating the test has started, or a test plan if not confirmed.
-    """
-    global _hpa_executor, _hpa_stop_event, _hpa_start_time, _hpa_history, _hpa_num_sandboxes, _hpa_duration
-    
-    if not confirmed:
-        return f"""### 📈 HPA 弹性扩缩容演示测试方案
-**测试目标**：验证 HPA (HorizontalPodAutoscaler) 能够根据 AI 智能体（Agent）的并发请求量，动态扩展沙箱预热池（SandboxWarmPool）。
-**测试参数**：并发索取 `{num_sandboxes}` 个沙箱，持续 `{duration_seconds}` 秒。
-**测试步骤**：
-1. 启动后台压测线程，并发索取沙箱。
-2. **Agent 监控循环**：我将进入循环，每 15 秒调用一次 `run_hpa_load_test_status` 监控实时状态并流式输出给您。
-3. 测试时间到达后，我将调用 `run_hpa_load_test_stop` 停止压测并生成总结报告。
-**预期结果**：HPA 检测到索取速率激增，自动调大期望副本数，WarmPool 随即扩容。
-**潜在风险**：消耗集群资源，测试结束后自动清理。
-
-**⚠️ 请确认是否执行此测试？** (请回复 "确认执行" 或 "Yes")
+    def _create_and_hold():
+        import uuid
+        claim_name = f"hpa-test-claim-{uuid.uuid4().hex[:8]}"
+        yaml_content = f"""apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxClaim
+metadata:
+  name: {claim_name}
+  namespace: default
+spec:
+  sandboxTemplateRef:
+    name: openclaw-template-gvisor-fuse
 """
-    
-    if _hpa_executor is not None:
-        return "❌ **Error:** A load test is already running. Please stop it first with `run_hpa_load_test_stop`."
-        
-    _hpa_num_sandboxes = num_sandboxes
-    _hpa_duration = duration_seconds
-    _hpa_stop_event = threading.Event()
-    _hpa_history = []
-    _hpa_start_time = time.time()
-    
-    # Record initial state
-    met, d_rep, w_rep, w_ready = _get_hpa_status_internal()
-    _hpa_history.append((0, met, d_rep, w_rep, w_ready))
-    
-    # Start load generation
-    _hpa_executor = ThreadPoolExecutor(max_workers=num_sandboxes)
-    for i in range(num_sandboxes):
-        _hpa_executor.submit(_hpa_load_worker_internal, i, _hpa_stop_event, _hpa_start_time, _hpa_duration)
-        
-    return f"🚀 **HPA 弹性扩缩容测试已启动！**\n并发索取沙箱数: `{num_sandboxes}`，预计持续时间: `{duration_seconds}` 秒。\n\n**接下来我将开始实时监控，请稍等...**"
-
-def run_hpa_load_test_status() -> str:
-    """
-    Waits for 15 seconds, then checks and returns the accumulated HPA and WarmPool status history as a table.
-    Call this repeatedly during the test to stream the progress.
-    
-    Returns:
-        A markdown table showing the scaling history up to the current time.
-    """
-    global _hpa_start_time, _hpa_history, _hpa_duration
-    
-    if _hpa_start_time is None:
-        return "❌ **Error:** No load test is currently running."
-        
-    # Wait 15 seconds for the monitoring interval
-    time.sleep(15)
-    
-    elapsed = int(time.time() - _hpa_start_time)
-    met, d_rep, w_rep, w_ready = _get_hpa_status_internal()
-    _hpa_history.append((elapsed, met, d_rep, w_rep, w_ready))
-    
-    report = [
-        f"🕒 **HPA 弹性扩缩容实时监控 (已运行: {elapsed}s / 目标: {_hpa_duration}s)**\n",
-        "| 运行时间 (Elapsed) | HPA 指标 (并发索取数) | HPA 期望副本数 (Desired) | WarmPool 实例数 (Ready) | 当前状态 (Status) |",
-        "|---:|---:|---:|---:|:---|",
-    ]
-    
-    for i, h in enumerate(_hpa_history):
-        e, m, d, w, wr = h
-        s = "🌱 初始化 (Idle)"
-        if i > 0:
-            def _safe_int(val, default=0):
-                try:
-                    return int(val)
-                except (ValueError, TypeError):
-                    return default
+        try:
+            _run_cmd(f"echo '{yaml_content}' | kubectl apply -f -")
+            time.sleep(hold_time)
+        except Exception:
+            pass
+        finally:
+            try:
+                _run_cmd(f"kubectl delete sandboxclaim {claim_name} --grace-period=0 --force")
+            except Exception:
+                pass
                     
-            curr_d = _safe_int(d)
-            prev_d = _safe_int(_hpa_history[i-1][2])
-            curr_w = _safe_int(w)
-            prev_w = _safe_int(_hpa_history[i-1][3])
-            init_d = _safe_int(_hpa_history[0][2])
+    executor = ThreadPoolExecutor(max_workers=50)
+    
+    # Get max replicas
+    max_replicas_out = _run_cmd("kubectl get hpa agent-warmpool-hpa-fuse -o jsonpath='{.spec.maxReplicas}'")
+    try:
+        max_replicas = int(max_replicas_out)
+    except:
+        max_replicas = 100
+        
+    # Phase 1: Load Generation
+    while not stop_event.is_set() and (time.time() - _hpa_start_time < creation_duration):
+        now = time.time()
+        elapsed = now - _hpa_start_time
+        
+        expected_claims = int(elapsed * rps)
+        if claims_created < expected_claims:
+            executor.submit(_create_and_hold)
+            claims_created += 1
             
-            if d == "N/A" or w == "N/A":
-                s = "⚠️ 监控数据异常 (Error)"
-            elif curr_d > prev_d:
-                s = "🚀 HPA 触发扩容! (Scale Up)"
-            elif curr_w > prev_w:
-                s = "⏳ 实例启动中... (Provisioning)"
-            elif curr_d > init_d:
-                s = "⚡ 持续扩容中 (Scaling)"
-            else:
-                s = "🟢 运行平稳 (Stable)"
-        report.append(f"| {e}s | {m} | {d} | {w} ({wr}) | {s} |")
+            if claims_created % 15 == 0:
+                _hpa_start_time += 15
+                last_status_time += 15
+                time.sleep(15)
+            
+        if now - last_status_time >= 15:
+            met, d_rep, w_rep, w_ready = _get_hpa_status_internal()
+            _hpa_history.append((int(elapsed), met, d_rep, w_rep, w_ready))
+            last_status_time = now
+            
+            try:
+                curr_d = int(d_rep)
+                curr_w = int(w_rep)
+                if curr_d >= max_replicas or curr_w >= max_replicas:
+                    break
+            except:
+                pass
+                
+            try:
+                report = _generate_final_report()
+                os.makedirs("scratch", exist_ok=True)
+                with open("scratch/hpa_test_report.md", "w") as f:
+                    f.write(report)
+            except Exception:
+                pass
+            
+        time.sleep(0.1)
         
-    if elapsed >= _hpa_duration:
-        report.append("\n⏱️ **达到设定测试时间。** 请调用 `run_hpa_load_test_stop` 以停止测试并查看最终分析报告。")
+    global _hpa_load_duration, _hpa_claims_created
+    _hpa_load_duration = int(time.time() - _hpa_start_time)
+    _hpa_claims_created = claims_created
+    
+    # Phase 2: Cooldown / Scale Down
+    _hpa_phase = "Cooldown"
+    cooldown_start = time.time()
+    
+    while not stop_event.is_set():
+        now = time.time()
+        elapsed = now - _hpa_start_time
         
-    return "\n".join(report)
+        if now - last_status_time >= 15:
+            met, d_rep, w_rep, w_ready = _get_hpa_status_internal()
+            _hpa_history.append((int(elapsed), met, d_rep, w_rep, w_ready))
+            last_status_time = now
+            
+            try:
+                report = _generate_final_report()
+                os.makedirs("scratch", exist_ok=True)
+                with open("scratch/hpa_test_report.md", "w") as f:
+                    f.write(report)
+            except Exception:
+                pass
+                
+            try:
+                curr_w = int(w_rep)
+                if curr_w <= initial_replicas:
+                    break
+            except:
+                pass
+                
+            if now - cooldown_start > 900:
+                break
+                
+        time.sleep(1)
+        
+    global _hpa_cooldown_duration
+    _hpa_cooldown_duration = int(time.time() - cooldown_start)
+    
+    # Phase 3: Done
+    executor.shutdown(wait=True)
+    _hpa_phase = "Done"
+    
+    try:
+        report = _generate_final_report()
+        os.makedirs("scratch", exist_ok=True)
+        with open("scratch/hpa_test_report.md", "w") as f:
+            f.write(report)
+    except Exception:
+        pass
 
-def run_hpa_load_test_stop() -> str:
-    """
-    Stops the HPA load test background threads, cleans up all claims, and returns the final analysis report.
+def _generate_final_report() -> str:
+    global _hpa_history, _hpa_rps, _hpa_hold_time, _hpa_creation_duration
+    global _hpa_load_duration, _hpa_cooldown_duration, _hpa_claims_created
     
-    Returns:
-        A comprehensive markdown report of the load test results.
-    """
-    global _hpa_executor, _hpa_stop_event, _hpa_start_time, _hpa_history, _hpa_num_sandboxes, _hpa_duration
-    
-    if _hpa_executor is None:
-        return "❌ **Error:** No load test is currently running."
-        
-    # Stop load
-    _hpa_stop_event.set()
-    _hpa_executor.shutdown(wait=False)
-    
-    # 🧹 环境清理 (Environment Cleanup)
-    # 1. 删除所有 SandboxClaim (触发控制器删除底层 Pod)
-    _run_cmd("kubectl delete sandboxclaim --all")
-    
-    # 2. 强行删除卡在 Terminating 状态的沙箱 Pod (WarmPool 和 Claim 残留)
-    stuck_pods_cmd = "kubectl get pods | grep -E 'openclaw-warmpool-gvisor-fuse|sandbox-claim' | grep Terminating | awk '{print $1}'"
-    stuck_pods = _run_cmd(stuck_pods_cmd).splitlines()
-    
-    deleted_pods = []
-    for pod in stuck_pods:
-        pod = pod.strip()
-        if pod:
-            _run_cmd(f"kubectl delete pod {pod} --grace-period=0 --force")
-            deleted_pods.append(pod)
-            
-    # 3. 强行删除所有可能残留的 Running 状态的临时沙箱 Pod (sandbox-claim-*)
-    running_claims_cmd = "kubectl get pods | grep 'sandbox-claim' | grep Running | awk '{print $1}'"
-    running_claims = _run_cmd(running_claims_cmd).splitlines()
-    for pod in running_claims:
-        pod = pod.strip()
-        if pod:
-            _run_cmd(f"kubectl delete pod {pod} --grace-period=0 --force")
-            deleted_pods.append(pod)
-            
     report = ["# 📈 HPA 弹性扩缩容演示最终报告\n"]
-    report.append(f"**测试配置**：并发索取 `{_hpa_num_sandboxes}` 个沙箱，持续 `{_hpa_duration}` 秒。\n")
+    report.append(f"**测试配置**：目标 RPS `{_hpa_rps}`，沙箱保持时间 `{_hpa_hold_time}s`，负载持续 `{_hpa_creation_duration}s`。\n")
     
-    if deleted_pods:
-        report.append("🧹 **环境自动清理 (Auto-Cleanup):**\n")
-        report.append(f"成功强行清理了 **{len(deleted_pods)}** 个残留/卡死的沙箱 Pod 资源：")
-        report.append("- 已执行 `kubectl delete sandboxclaim --all` 确保所有 Claim 声明被清除。")
-        report.append("- 已执行 `kubectl delete pod --force` 强行移除了以下卡死在 `Terminating` 或残留的 Pod：")
-        report.append("```")
-        for p in deleted_pods:
-            report.append(f"  - {p}")
-        report.append("```")
-        report.append("*(注：GKE 调度器与存储挂载在高并发压测下可能导致 Pod 卡死，已通过强行删除恢复环境干净状态。)*\n")
-    else:
-        report.append("🧹 **环境自动清理 (Auto-Cleanup):** 未发现残留或卡死的沙箱 Pod，环境保持良好。\n")
-        
+    total_duration = _hpa_load_duration + _hpa_cooldown_duration
+    actual_rate = _hpa_claims_created / _hpa_load_duration if _hpa_load_duration > 0 else 0
+    
+    report.append("## ⏱️ 时间与速率统计")
+    report.append(f"- **加压阶段耗时**：`{_hpa_load_duration}s`")
+    report.append(f"- **冷却缩容阶段耗时**：`{_hpa_cooldown_duration}s`")
+    report.append(f"- **总测试耗时**：`{total_duration}s`")
+    report.append(f"- **成功创建沙箱总数**：`{_hpa_claims_created}`")
+    report.append(f"- **实际创建速率**：`{actual_rate:.2f} /s` (目标 RPS: `{_hpa_rps}`)")
+    report.append("\n")
+    
     report.append("## 📊 完整扩缩容历史")
-    report.append("| 运行时间 (Elapsed) | HPA 指标 (并发索取数) | HPA 期望副本数 (Desired) | WarmPool 实例数 (Ready) | 状态 (Status) |")
-    report.append("|---:|---:|---:|---:|:---|")
+    report.append("<table border='1' style='border-collapse: collapse; width: 100%; text-align: center;'>")
+    report.append("  <tr style='background-color: #f2f2f2;'>")
+    report.append("    <th>运行时间 (Elapsed)</th>")
+    report.append("    <th>HPA 指标 (并发沙箱数)</th>")
+    report.append("    <th>HPA 期望副本数 (Desired)</th>")
+    report.append("    <th>WarmPool 实例数 (Ready)</th>")
+    report.append("    <th>当前状态 (Status)</th>")
+    report.append("  </tr>")
     
     for i, h in enumerate(_hpa_history):
         e, m, d, w, wr = h
         s = "🌱 初始化"
         if i > 0:
-            prev_d = int(_hpa_history[i-1][2])
-            prev_w = int(_hpa_history[i-1][3])
-            if int(d) > prev_d:
+            def _safe_int(val, default=0):
+                try: return int(val)
+                except: return default
+            
+            prev_d = _safe_int(_hpa_history[i-1][2])
+            curr_d = _safe_int(d)
+            prev_w = _safe_int(_hpa_history[i-1][3])
+            curr_w = _safe_int(w)
+            
+            if curr_d > prev_d:
                 s = "🚀 HPA 触发扩容"
-            elif int(w) > prev_w:
+            elif curr_w > prev_w:
                 s = "⏳ 实例启动中"
-            elif int(d) > int(_hpa_history[0][2]):
+            elif curr_d > _safe_int(_hpa_history[0][2]):
                 s = "⚡ 持续扩容中"
+            elif curr_w < prev_w:
+                s = "📉 触发缩容"
             else:
                 s = "🟢 运行平稳"
-        report.append(f"| {e}s | {m} | {d} | {w} ({wr}) | {s} |")
+        report.append(f"  <tr><td>{e}s</td><td>{m}</td><td>{d}</td><td>{w} ({wr})</td><td>{s}</td></tr>")
         
-    report.append("\n⏹️ **负载生成已停止。** 正在清理测试索取的沙箱资源...")
-    
-    # Analysis
+    report.append("</table>")
+        
     report.append("\n## 📊 结果分析")
-    initial_rep = int(_hpa_history[0][3])
-    final_rep = int(_hpa_history[-1][3])
-    max_desired = max(int(h[2]) for h in _hpa_history if h[2] != "N/A")
-    
-    report.append(f"- **初始 WarmPool 大小**：`{initial_rep}` 实例")
-    report.append(f"- **HPA 触发最大期望大小**：`{max_desired}` 实例")
-    report.append(f"- **最终 WarmPool 大小**：`{final_rep}` 实例")
-    
-    if max_desired > initial_rep:
-        report.append(f"\n🎉 **测试成功**：HPA 成功检测到并发索取速率的激增，并动态扩展了 `SandboxWarmPool`！")
-        report.append(f"这证明了 `ai-agent-sandbox-on-gke` 架构能够通过动态调整预热池大小，轻松应对 AI 智能体需求的爆发式增长，在保证亚秒级启动的同时，在空闲时降低基础设施成本。")
-    else:
-        report.append(f"\n⚠️ **观察结果**：HPA 在测试期间未触发扩容。这通常是因为：")
-        report.append("1. 指标从收集到上报至 Stackdriver 存在延迟（通常 1-3 分钟），测试时间可能较短。")
-        report.append("2. 当前 WarmPool 的初始容量足够大，未达到触发扩容的阈值。")
-        report.append("3. 自定义指标适配器（Custom Metrics Adapter）可能正在预热。")
+    try:
+        initial_rep = int(_hpa_history[0][3])
+        final_rep = int(_hpa_history[-1][3])
+        max_desired = max(int(h[2]) for h in _hpa_history if h[2] != "N/A")
         
-    # Reset state
-    _hpa_executor = None
-    _hpa_stop_event = None
-    _hpa_start_time = None
-    _hpa_history = []
-    
+        report.append(f"- **初始 WarmPool 大小**：`{initial_rep}` 实例")
+        report.append(f"- **HPA 触发最大期望大小**：`{max_desired}` 实例")
+        report.append(f"- **最终 WarmPool 大小**：`{final_rep}` 实例")
+        
+        if max_desired > initial_rep:
+            report.append(f"\n🎉 **测试成功**：HPA 成功检测到并发沙箱速率的激增，并动态扩展了 `SandboxWarmPool`！")
+        else:
+            report.append(f"\n⚠️ **观察结果**：HPA 在测试期间未触发扩容。")
+    except:
+        report.append("分析数据不足。")
+        
     return "\n".join(report)
+
+def run_hpa_load_test_start(rps: float = 1.0, hold_time: float = 15.0, creation_duration: int = 120, confirmed: bool = False) -> str:
+    """
+    Starts the HPA elastic scaling load test by generating heavy concurrent load in the background.
+    MUST be confirmed by the user first.
+    
+    Args:
+        rps: Requests (claims) per second to create. Default is 1.0.
+        hold_time: How long each sandbox stays alive before deletion (in seconds). Default is 15.0.
+        creation_duration: Duration to keep generating new claims (in seconds). Default is 120.
+        confirmed: Must be True to run.
+        
+    Returns:
+        A message indicating the test has started, or a test plan if not confirmed.
+    """
+    global _hpa_master_thread, _hpa_stop_event, _hpa_rps, _hpa_hold_time, _hpa_creation_duration, _hpa_phase
+    
+    if not confirmed:
+        return f"""### 📈 HPA 弹性扩缩容演示测试方案
+**测试目标**：验证 HPA 能够根据 AI 智能体并发请求量，动态扩展沙箱预热池。
+**测试参数**：
+- **RPS** (每秒创建): `{rps}`
+- **保持时间** (每个沙箱存活): `{hold_time}s`
+- **负载时长**: `{creation_duration}s`
+**测试步骤**：
+1. 启动后台线程，按 RPS 生成沙箱沙箱负载。
+2. 负载结束后，**继续监控** HPA 直到 WarmPool 缩容回初始状态（minReplicas）。
+3. 自动生成最终报告并保存至 `scratch/hpa_test_report.md`。
+
+**⚠️ 请确认是否执行此测试？** (请回复 "确认执行" 或 "Yes")
+"""
+    
+    if _hpa_master_thread is not None and _hpa_master_thread.is_alive():
+        return f"❌ **Error:** A load test is already running. Phase: `{_hpa_phase}`."
+        
+    _hpa_rps = rps
+    _hpa_hold_time = hold_time
+    _hpa_creation_duration = creation_duration
+    _hpa_stop_event = threading.Event()
+    
+    _hpa_master_thread = threading.Thread(
+        target=_hpa_test_master_loop,
+        args=(rps, hold_time, creation_duration, _hpa_stop_event),
+        daemon=True
+    )
+    _hpa_master_thread.start()
+        
+    return f"🚀 **HPA 弹性扩缩容测试已启动！**\n参数: RPS={rps}, HoldTime={hold_time}s, Duration={creation_duration}s\n\n**后台正在运行，您可以随时调用 `run_hpa_load_test_status` 查看当前进度。**"
+
+def run_hpa_load_test_status() -> str:
+    """
+    Checks and returns the accumulated HPA and WarmPool status history as a table.
+    Blocks for 15 seconds to pace the LLM loop unless done.
+    
+    Returns:
+        A markdown table showing the scaling history up to the current time.
+    """
+    global _hpa_start_time, _hpa_history, _hpa_creation_duration, _hpa_phase
+    
+    if _hpa_phase == "Idle":
+        return "❌ **Error:** No load test is currently running."
+        
+    if _hpa_phase != "Done":
+        time.sleep(15)
+        
+    elapsed = int(time.time() - _hpa_start_time) if _hpa_start_time else 0
+    
+    report = [
+        f"<p>🕒 <b>HPA 弹性扩缩容实时监控 (当前阶段: {_hpa_phase} / 已运行: {elapsed}s)</b></p>",
+        "<table border='1' style='border-collapse: collapse; width: 100%; text-align: center;'>",
+        "  <tr style='background-color: #f2f2f2;'>",
+        "    <th>运行时间 (Elapsed)</th>",
+        "    <th>HPA 指标 (并发沙箱数)</th>",
+        "    <th>HPA 期望副本数 (Desired)</th>",
+        "    <th>WarmPool 实例数 (Ready)</th>",
+        "    <th>当前状态 (Status)</th>",
+        "  </tr>"
+    ]
+    
+    for i, h in enumerate(_hpa_history):
+        e, m, d, w, wr = h
+        s = "🌱 初始化"
+        if i > 0:
+            def _safe_int(val, default=0):
+                try: return int(val)
+                except: return default
+            
+            prev_d = _safe_int(_hpa_history[i-1][2])
+            curr_d = _safe_int(d)
+            prev_w = _safe_int(_hpa_history[i-1][3])
+            curr_w = _safe_int(w)
+            
+            if curr_d > prev_d:
+                s = "🚀 HPA 触发扩容"
+            elif curr_w > prev_w:
+                s = "⏳ 实例启动中"
+            elif curr_d > _safe_int(_hpa_history[0][2]):
+                s = "⚡ 持续扩容中"
+            elif curr_w < prev_w:
+                s = "📉 触发缩容"
+            else:
+                s = "🟢 运行平稳"
+        report.append(f"  <tr><td>{e}s</td><td>{m}</td><td>{d}</td><td>{w} ({wr})</td><td>{s}</td></tr>")
+        
+    report.append("</table>")
+        
+    if _hpa_phase == "Done":
+        report.append("\n🎉 **测试已完成！** 最终报告已保存至 `scratch/hpa_test_report.md`。")
+        
+    return "\n".join(report)
+
+def run_hpa_load_test_stop() -> str:
+    """
+    Stops the HPA load test, cleans up claims, and returns the report.
+    """
+    global _hpa_stop_event, _hpa_phase
+    
+    if _hpa_phase == "Idle":
+        return "❌ **Error:** No load test is currently running."
+        
+    if _hpa_stop_event:
+        _hpa_stop_event.set()
+        
+    _run_cmd("kubectl delete sandboxclaim --all")
+    
+    report = _generate_final_report()
+    _hpa_phase = "Idle"
+    
+    return report
 
 def get_feishu_configuration_guide() -> str:
     """
@@ -513,9 +649,8 @@ You are **STRICTLY FORBIDDEN** from running the test tools immediately when a us
     *   For **Pod Snapshot Demo**: Call `run_pod_snapshot_demo` with `confirmed=True`.
     *   For **HPA Load Test**:
         1. Call `run_hpa_load_test_start` with `confirmed=True`.
-        2. IMMEDIATELY enter a monitoring loop. In each subsequent turn, call `run_hpa_load_test_status`. This tool will automatically wait 15 seconds and return the accumulated history table. Present this table to the user.
-        3. Repeat calling `run_hpa_load_test_status` in subsequent turns until the elapsed time reaches the test duration.
-        4. Finally, call `run_hpa_load_test_stop` to stop the test and present the final analysis report.
+        2. **Crucial:** Do NOT answer the user yet. Instead, immediately enter a continuous loop of calling `run_hpa_load_test_status` until the output indicates the phase is "Done". Present the result of each call.
+        3. Once the phase is "Done", call `run_hpa_load_test_stop` to get the final analysis, and ONLY THEN provide your final response to the user with the report.
 
 For non-test tools (`kubectl_cmd`, `get_feishu_configuration_guide`, `explain_storage_options`), you may use them directly as needed.
 
