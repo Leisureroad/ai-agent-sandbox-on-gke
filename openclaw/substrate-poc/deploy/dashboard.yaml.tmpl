@@ -1,0 +1,154 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openclaw-dashboard
+  namespace: openclaw
+---
+# kubectl-ate logs actor reads worker pod logs in the WorkerPool namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openclaw-dashboard-logs
+  namespace: openclaw-workers
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openclaw-dashboard-logs
+  namespace: openclaw-workers
+subjects:
+- kind: ServiceAccount
+  name: openclaw-dashboard
+  namespace: openclaw
+roleRef:
+  kind: Role
+  name: openclaw-dashboard-logs
+  apiGroup: rbac.authorization.k8s.io
+---
+# Worker autoscaler (runs in the dashboard): scale the WorkerPool, order idle
+# pods first for removal, read the capacity buffer and worker nodes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openclaw-dashboard-autoscaler
+  namespace: openclaw-workers
+rules:
+- apiGroups: ["ate.dev"]
+  resources: ["workerpools"]
+  verbs: ["get", "list"]
+- apiGroups: ["ate.dev"]
+  resources: ["workerpools/scale"]
+  verbs: ["get", "patch", "update"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "patch"]
+- apiGroups: ["autoscaling.x-k8s.io"]
+  resources: ["capacitybuffers"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openclaw-dashboard-autoscaler
+  namespace: openclaw-workers
+subjects:
+- kind: ServiceAccount
+  name: openclaw-dashboard
+  namespace: openclaw
+roleRef:
+  kind: Role
+  name: openclaw-dashboard-autoscaler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openclaw-dashboard-nodes
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openclaw-dashboard-nodes
+subjects:
+- kind: ServiceAccount
+  name: openclaw-dashboard
+  namespace: openclaw
+roleRef:
+  kind: ClusterRole
+  name: openclaw-dashboard-nodes
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw-dashboard
+  namespace: openclaw
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: openclaw-dashboard }
+  template:
+    metadata:
+      labels: { app: openclaw-dashboard }
+    spec:
+      serviceAccountName: openclaw-dashboard
+      containers:
+      - name: dashboard
+        image: ${DASHBOARD_IMAGE}
+        ports:
+        - { containerPort: 8090 }
+        env:
+        - { name: ATESPACE, value: openclaw-demo }
+        - { name: TEMPLATE, value: ${TEMPLATE_NAME} }
+        - { name: ATE_ENDPOINT, value: "api.ate-system.svc:443" }
+        - { name: ATE_TOKEN_FILE, value: /var/run/ate/token }
+        - { name: OBSERVER_URL, value: "http://openclaw-gateway.openclaw.svc:18790" }
+        - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+        - { name: AUTOSCALE, value: "true" }
+        - { name: WORKER_NAMESPACE, value: openclaw-workers }
+        - { name: WORKER_POOL, value: openclaw }
+        - { name: AUTOSCALE_MIN, value: "3" }
+        - { name: AUTOSCALE_MAX, value: "9" }
+        - { name: AUTOSCALE_SPARE, value: "1" }
+        - { name: AUTOSCALE_COOLDOWN_MS, value: "180000" }
+        - { name: CAPACITY_BUFFER, value: openclaw-worker-standby }
+        resources:
+          requests: { cpu: 100m, memory: 128Mi }
+          limits: { memory: 512Mi }
+        readinessProbe:
+          httpGet: { path: /healthz, port: 8090 }
+        volumeMounts:
+        - { name: ate-api, mountPath: /var/run/ate, readOnly: true }
+      volumes:
+      - name: ate-api
+        projected:
+          sources:
+          - clusterTrustBundle:
+              signerName: servicedns.podcert.ate.dev/identity
+              labelSelector:
+                matchLabels: { podcert.ate.dev/canarying: live }
+              path: ca.crt
+          - serviceAccountToken:
+              audience: api.ate-system.svc
+              path: token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openclaw-dashboard
+  namespace: openclaw
+spec:
+  type: LoadBalancer
+  # Demo only: restrict to your own egress IP range in production.
+  loadBalancerSourceRanges: ${DASHBOARD_SOURCE_RANGES}
+  selector: { app: openclaw-dashboard }
+  ports:
+  - { port: 80, targetPort: 8090 }

@@ -1,0 +1,42 @@
+# GKE standby capacity buffer for the OpenClaw worker node pool.
+#
+# One chunk = one worker pod's shape (500m CPU / 3.5Gi, gVisor taint, worker
+# node pool). Three chunks fill one n2d-standard-4 worker node, so GKE keeps one
+# extra worker node pre-initialized (images pre-pulled, DaemonSets started) and
+# then SUSPENDED: no compute cost while idle, resumed in seconds when the
+# WorkerPool autoscaler adds a fourth worker and the pending pod needs a node.
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: openclaw-worker-shape
+  namespace: openclaw-workers
+template:
+  metadata:
+    labels:
+      app: openclaw-worker-buffer
+  spec:
+    nodeSelector:
+      cloud.google.com/compute-class: openclaw-workers
+    tolerations:
+    - key: cloud.google.com/compute-class
+      operator: Equal
+      value: openclaw-workers
+      effect: NoSchedule
+    containers:
+    - name: placeholder
+      image: registry.k8s.io/pause:3.10
+      resources:
+        requests:
+          cpu: 500m
+          memory: 3584Mi
+---
+apiVersion: autoscaling.x-k8s.io/v1beta1
+kind: CapacityBuffer
+metadata:
+  name: openclaw-worker-standby
+  namespace: openclaw-workers
+spec:
+  provisioningStrategy: buffer.gke.io/standby-capacity
+  podTemplateRef:
+    name: openclaw-worker-shape
+  replicas: 3
