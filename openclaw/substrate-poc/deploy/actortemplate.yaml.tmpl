@@ -1,0 +1,49 @@
+# protojson ateapi.ActorTemplate, created with:
+#   kubectl ate --preview create actor-template -f actortemplate.yaml
+metadata:
+  atespace: openclaw-demo
+  name: ${TEMPLATE_NAME}
+workerSelector:
+  matchLabels:
+    workload: openclaw
+containers:
+- name: agent
+  image: ${ACTOR_IMAGE}
+  env:
+  - { name: HOME, value: /home/node }
+  - { name: OPENCLAW_CONFIG_DIR, value: /home/node/.openclaw }
+  - { name: NODE_ENV, value: production }
+  # Literal values (ActorTemplate env has no secretKeyRef). Never commit the
+  # rendered file.
+  - { name: GEMINI_API_KEY, value: "${GEMINI_API_KEY}" }
+  - { name: OPENCLAW_GATEWAY_TOKEN, value: "${GATEWAY_TOKEN}" }
+  # Gate the golden checkpoint (and every resume) on OpenClaw being fully up:
+  # cold boot inside gVisor takes minutes (first-run SQLite init), so the
+  # default 20s warmup would snapshot a half-booted process.
+  wakeupProbe:
+    httpGet:
+      path: /readyz
+      port: 80
+    timeoutSeconds: 900
+  volumeMounts:
+  - name: system-info
+    mountPath: /run/ate
+  - name: workspace
+    mountPath: /home/node/.openclaw/workspace
+resources:
+  limits:
+    cpuMillicores: 1000
+    memoryBytes: 2684354560 # 2.5Gi
+snapshotConfig:
+  # Process memory + rootfs: the agent resumes warm, mid-conversation.
+  preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+volumes:
+- name: system-info
+  systemInfo:
+    dataSources:
+    - actorMetadata:
+        items:
+        - { field: ACTOR_METADATA_FIELD_NAME, path: actor-id }
+        - { field: ACTOR_METADATA_FIELD_ATESPACE, path: atespace }
+        - { field: ACTOR_METADATA_FIELD_UID, path: actor-uid }
+${WORKSPACE_VOLUME}

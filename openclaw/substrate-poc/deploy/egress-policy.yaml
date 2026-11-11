@@ -1,0 +1,9 @@
+# Egress policy applied to every per-conversation OpenClaw actor (created by the
+# gateway's substrate plugin right after CreateActor). Substrate v1.0 denies all
+# egress, DNS included, for an actor without a policy.
+rules:
+- tls_passthrough:
+    hostnames:
+    - generativelanguage.googleapis.com
+    ports:
+      numbers: [443]

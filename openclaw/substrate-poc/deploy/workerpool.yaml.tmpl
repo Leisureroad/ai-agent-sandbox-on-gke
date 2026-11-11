@@ -1,0 +1,29 @@
+apiVersion: ate.dev/v1
+kind: WorkerPool
+metadata:
+  name: openclaw
+  namespace: openclaw-workers
+  labels:
+    workload: openclaw
+spec:
+  # Fewer workers than conversations on purpose: idle actors are suspended and
+  # their worker is handed to whoever talks next.
+  replicas: 3
+  workerImage: ${WORKER_IMAGE}
+  sandboxClasses:
+  - name: gvisor
+  template:
+    # Workers run only on the autoscaled worker node pool (n2d-standard-4, three
+    # workers per node). Its taint ate.dev/sandboxClass=gvisor is tolerated by
+    # gVisor worker pods by default.
+    nodeSelector:
+      cloud.google.com/compute-class: openclaw-workers
+    # Sized for one OpenClaw actor (1 vCPU / 2.5 GiB) plus runtime overhead,
+    # so "worker freed on suspend" is visible one-to-one in the dashboard.
+    resources:
+      limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 3584Mi

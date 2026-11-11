@@ -1,0 +1,307 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+/**
+ * Substrate ACP runtime backend (gateway side).
+ * Implements the AcpRuntime contract by forwarding each turn over HTTP to the
+ * actor's OpenAI-compatible /v1/chat/completions endpoint (routed through
+ * atenet, which resumes the actor on demand) and translating the SSE stream
+ * back into AcpRuntimeEvents.
+ */
+import type {
+  AcpRuntime,
+  AcpRuntimeEnsureInput,
+  AcpRuntimeEvent,
+  AcpRuntimeHandle,
+  AcpRuntimeTurn,
+  AcpRuntimeTurnInput,
+  AcpRuntimeTurnResult,
+} from "openclaw/plugin-sdk/acp-runtime-backend";
+import { actorNameForConversation, DEFAULT_ACTOR_DOMAIN, fetchActor, type ActorRef } from "./actor-router.js";
+import type { Provisioner } from "./actor-provisioner.js";
+import type { Observer } from "./observer.js";
+
+export type SubstrateAcpRuntimeConfig = {
+  /** Atespace the conversation actors live in. */
+  atespace: string;
+  /** Default golden ActorTemplate ("<namespace>/<name>") to derive actors from. */
+  template: string;
+  /** Optional per-persona template override, keyed by resolved agentId. */
+  templateForAgent?: Record<string, string>;
+  /** DNS domain actors are addressed under (default actors.resources.substrate.ate.dev). */
+  actorDomain?: string;
+  /** Bearer token for the actor's /v1/chat/completions API. */
+  actorToken?: string;
+  /**
+   * Prepended to the first text chunk of every reply the actor streams back.
+   *
+   * On a channel where the gateway is bound to the same account the human is
+   * typing from (WhatsApp paired to your own number is the obvious one), the
+   * agent's messages render exactly like the human's: same bubble, same side,
+   * same read receipts. Nothing downstream distinguishes them, so the marker
+   * has to be in the text.
+   *
+   * It goes here rather than in the actor's persona because a persona
+   * instruction is a request. The model honours it for a while and then drops
+   * it, most reliably right after a resume, which is the one moment in this
+   * system worth being able to read off a transcript. Doing it on the way out
+   * makes it a property of the channel instead.
+   */
+  replyPrefix?: string;
+  /** Creates the conversation actor from its golden template if absent. */
+  provisioner: Provisioner;
+  /** Idle-suspend hooks (the sandboxed actor can't suspend itself, so the
+   *  gateway drives it). onActivity marks liveness; onTurnStart/onTurnEnd bracket
+   *  an in-flight turn so the actor is never suspended mid-turn. */
+  onActivity?: (actorName: string) => void;
+  onTurnStart?: (actorName: string) => void;
+  onTurnEnd?: (actorName: string) => void;
+  logger?: { info: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
+  /** Demo observer (dashboard feed). */
+  observer?: Observer;
+};
+
+export function createSubstrateAcpRuntime(config: SubstrateAcpRuntimeConfig): AcpRuntime {
+  const domain = config.actorDomain ?? DEFAULT_ACTOR_DOMAIN;
+  const authHeaders = (): Record<string, string> =>
+    config.actorToken ? { Authorization: `Bearer ${config.actorToken}` } : {};
+  const templateFor = (agent?: string): string =>
+    (agent && config.templateForAgent?.[agent]) || config.template;
+  // Placement is a pure function of the conversation key, so both ensureSession
+  // and startTurn derive the same actor with no side map.
+  const refForSession = (sessionKey: string): ActorRef => ({
+    name: actorNameForConversation(sessionKey),
+    atespace: config.atespace,
+    domain,
+  });
+  // The gateway's ACP session key uses reserved internal namespaces
+  // (e.g. "agent:main:acp:binding:..."), which the actor's
+  // /v1/chat/completions rejects via X-OpenClaw-Session-Key ("reserved
+  // internal session namespaces"). Each conversation has its own actor, so we
+  // key the in-actor session by the (stable, non-reserved) actor name instead.
+  const actorSessionKey = (sessionKey: string): string =>
+    actorNameForConversation(sessionKey);
+  const killSession = (sessionKey: string): Promise<unknown> =>
+    fetchActor(refForSession(sessionKey), `/sessions/${encodeURIComponent(actorSessionKey(sessionKey))}/kill`, {
+      method: "POST",
+      headers: authHeaders(),
+    }).catch(() => {});
+
+  const runtime: AcpRuntime = {
+    async ensureSession(input: AcpRuntimeEnsureInput): Promise<AcpRuntimeHandle> {
+      // One actor per conversation: create-if-absent from the golden template.
+      // Session state lives in that actor's snapshot; no remote call to warm.
+      const name = actorNameForConversation(input.sessionKey);
+      const agent = (input as { agent?: string }).agent;
+      config.observer?.session(name, input.sessionKey);
+      await config.provisioner.ensure(name, templateFor(agent));
+      config.onActivity?.(name);
+      return {
+        sessionKey: input.sessionKey,
+        backend: "substrate",
+        runtimeSessionName: input.sessionKey,
+        cwd: input.cwd,
+      };
+    },
+
+    startTurn(input: AcpRuntimeTurnInput): AcpRuntimeTurn {
+      const actor = refForSession(input.handle.sessionKey);
+      const turnActor = actor.name;
+      config.onTurnStart?.(turnActor);
+      const source = input.handle.sessionKey.startsWith("web:") ? "web" : "feishu";
+      config.observer?.userMessage(turnActor, input.handle.sessionKey, input.text, source);
+      const abort = new AbortController();
+      input.signal?.addEventListener("abort", () => abort.abort(input.signal?.reason));
+      let resolveResult!: (v: AcpRuntimeTurnResult) => void;
+      const result = new Promise<AcpRuntimeTurnResult>((r) => (resolveResult = r));
+      result
+        .then((r) =>
+          config.observer?.turnDone(
+            turnActor,
+            r.status,
+            r.status === "failed" ? (r as { error?: { message?: string } }).error?.message : undefined,
+          ),
+        )
+        .catch(() => config.observer?.turnDone(turnActor, "failed", "turn error"));
+      result.finally(() => config.onTurnEnd?.(turnActor)).catch(() => {});
+      const events = streamTurn(
+        actor,
+        input,
+        actorSessionKey(input.handle.sessionKey),
+        authHeaders(),
+        abort.signal,
+        resolveResult,
+        config.replyPrefix,
+        config.observer ? (t: string) => config.observer!.assistantDelta(turnActor, t) : undefined,
+        // Actor deleted out-of-band (e.g. from the console): forget the cached
+        // "exists" bit, re-create it from the golden template, retry once.
+        async () => {
+          config.provisioner.forget(turnActor);
+          await config.provisioner.ensure(turnActor, templateFor((input.handle as { agent?: string }).agent));
+        },
+        // Actor CRASHED (router answers 503 fast, e.g. its node was removed
+        // before its snapshot reached storage): revert to the last durable
+        // snapshot and retry once.
+        () => config.provisioner.revert(turnActor),
+      );
+      return {
+        requestId: input.requestId,
+        events,
+        result,
+        async cancel() {
+          abort.abort("cancelled");
+          await killSession(input.handle.sessionKey);
+        },
+        async closeStream() {
+          abort.abort("stream closed");
+        },
+      };
+    },
+
+    async *runTurn(input: AcpRuntimeTurnInput): AsyncIterable<AcpRuntimeEvent> {
+      yield* runtime.startTurn!(input).events;
+    },
+
+    getCapabilities() {
+      return { controls: [] };
+    },
+
+    async cancel(input) {
+      await killSession(input.handle.sessionKey);
+    },
+
+    async close() {
+      /* no-op: the gateway's idle suspender suspends the actor (idle-suspender.ts) */
+    },
+  };
+  return runtime;
+}
+
+async function* streamTurn(
+  actor: ActorRef,
+  input: AcpRuntimeTurnInput,
+  sessionKey: string,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+  resolveResult: (v: AcpRuntimeTurnResult) => void,
+  replyPrefix?: string,
+  onText?: (t: string) => void,
+  onNotFound?: () => Promise<void>,
+  onUnavailable?: () => Promise<void>,
+): AsyncIterable<AcpRuntimeEvent> {
+  let res: Response;
+  const doFetch = () =>
+    fetchActor(actor, "/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-OpenClaw-Session-Key": sessionKey,
+        ...headers,
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: input.text }],
+        stream: true,
+      }),
+      signal,
+    });
+  try {
+    res = await doFetch();
+    if (res.status === 404 && onNotFound) {
+      await res.body?.cancel().catch(() => {});
+      await onNotFound();
+      res = await doFetch();
+    } else if (res.status === 503 && onUnavailable) {
+      await res.body?.cancel().catch(() => {});
+      await onUnavailable();
+      res = await doFetch();
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    yield { type: "error", message, retryable: err instanceof TypeError };
+    resolveResult({ status: "failed", error: { message, retryable: err instanceof TypeError } });
+    return;
+  }
+
+  if (!res.ok) {
+    const message = `Actor HTTP ${res.status} ${res.statusText}`;
+    yield { type: "error", message, retryable: res.status >= 500 };
+    resolveResult({ status: "failed", error: { message, retryable: res.status >= 500 } });
+    return;
+  }
+  if (!res.body) {
+    resolveResult({ status: "completed" });
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  // Emitted lazily, immediately before the first chunk of actual text, rather
+  // than up front: a turn can fail or be cancelled before the actor says
+  // anything, and a bare prefix sitting alone in the thread is worse than no
+  // prefix at all. Tool calls do not count as text, so a reply that starts by
+  // calling a tool still gets marked on the words it eventually produces.
+  let prefixPending = Boolean(replyPrefix);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith("data: ")) continue;
+        const data = t.slice(6);
+        if (data === "[DONE]") {
+          yield { type: "done", status: "completed" };
+          resolveResult({ status: "completed" });
+          return;
+        }
+        const ev = parseChunk(data);
+        if (!ev) continue;
+        if (prefixPending && ev.type === "text_delta") {
+          prefixPending = false;
+          yield { type: "text_delta", text: replyPrefix!, tag: "agent_message_chunk" };
+        }
+        if (ev.type === "text_delta") onText?.((ev as { text: string }).text);
+        yield ev;
+      }
+    }
+    resolveResult({ status: "completed" });
+  } catch (err) {
+    if (signal.aborted) {
+      resolveResult({ status: "cancelled", stopReason: "aborted" });
+    } else {
+      const message = err instanceof Error ? err.message : String(err);
+      yield { type: "error", message };
+      resolveResult({ status: "failed", error: { message } });
+    }
+  }
+}
+
+function parseChunk(data: string): AcpRuntimeEvent | null {
+  try {
+    const choice = JSON.parse(data)?.choices?.[0];
+    const delta = choice?.delta;
+    if (delta?.content) return { type: "text_delta", text: delta.content, tag: "agent_message_chunk" };
+    if (delta?.tool_calls?.length) {
+      const tc = delta.tool_calls[0];
+      return { type: "tool_call", text: tc.function?.name ?? "", toolCallId: tc.id, tag: "tool_call" };
+    }
+    if (choice?.finish_reason) return { type: "done", status: "completed", stopReason: choice.finish_reason };
+    return null;
+  } catch {
+    return null;
+  }
+}

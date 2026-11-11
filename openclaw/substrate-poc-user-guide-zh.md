@@ -129,7 +129,7 @@ sequenceDiagram
 | substrate-gke 工具 | 开源 `github.com/ai-on-gke/substrate-gke`（`tools/setup-gcp`、`tools/cleanup-gcp`） | 一键创建 GCP 资源和集群 |
 | Filestore CSI（Substrate overlay） | 开源 `kubernetes-sigs/gcp-filestore-csi-driver` 的 `deploy/kubernetes/overlays/substrate` | 每个智能体挂载一块 Filestore VolumePool 卷（可选） |
 | OpenClaw 2026.11.2-slim | 公开镜像 `ghcr.io/openclaw/openclaw`（按 digest 固定） | 智能体与网关 |
-| POC 代码包 | 随本指南提供 `openclaw-substrate-poc-bundle.tar.gz` | 网关插件、镜像构建、部署脚本、控制台、扩缩容控制器 |
+| POC 代码 | 本仓库 [`openclaw/substrate-poc/`](./substrate-poc/) | 网关插件、镜像构建、部署脚本、控制台、扩缩容控制器 |
 
 ---
 
@@ -172,8 +172,9 @@ git clone https://github.com/agent-substrate/substrate.git && (cd substrate && g
 git clone https://github.com/ai-on-gke/substrate-gke.git
 git clone --depth 1 https://github.com/kubernetes-sigs/gcp-filestore-csi-driver.git   # 使用 Filestore 时
 
-# 2) POC 代码包
-tar -xzf openclaw-substrate-poc-bundle.tar.gz      # 解出 openclaw-demo/
+# 2) POC 代码（本仓库 openclaw/substrate-poc/ 目录）
+git clone https://github.com/Leisureroad/ai-agent-sandbox-on-gke.git
+cp -r ai-agent-sandbox-on-gke/openclaw/substrate-poc openclaw-demo
 
 # 3) 密钥目录（不要提交到任何仓库）
 mkdir -p secrets && chmod 700 secrets
@@ -239,14 +240,17 @@ source $WORK/substrate-gke/.ate-dev-env.sh
 gcloud auth login && gcloud auth application-default login
 ```
 
-### 4.1 替换代码包中的项目相关值
+### 4.1 项目相关值全部来自环境变量
 
-| 文件 | 要改的内容 |
+代码包中不再写死任何项目 ID 或区域，客户无需修改代码文件：
+
+| 位置 | 取值来源 |
 |---|---|
-| `openclaw-demo/deploy/computeclass.yaml` | `serviceAccount: ate-gke-node@<project-id>.iam.gserviceaccount.com` |
-| `openclaw-demo/build/cloudbuild-*.yaml` | `_REPO: <region>-docker.pkg.dev/<project-id>/ate-images` |
-| `openclaw-demo/deploy/deploy.sh` | `REPO=` 中的区域（默认 `us-central1`） |
-| `openclaw-demo/build/actor/SOUL.md`、`IDENTITY.md` | 智能体的人设，默认是中文助手 “Ada”，可按需修改 |
+| `deploy/deploy.sh` | 读取 `.ate-dev-env.sh`（可用 `ENV_FILE=/path/to/env.sh` 指定其他文件）中的 `PROJECT_ID`（必填）、`GCE_REGION`（默认 `us-central1`）、`ARTIFACT_REGISTRY_REPOSITORY`（默认 `ate-images`）、`NODE_GSA_NAME`（默认 `ate-gke-node`）；也可直接设置 `NODE_SA` 覆盖节点服务账号 |
+| `deploy/computeclass.yaml.tmpl` | `${NODE_SA}` 由 `deploy.sh` 渲染为 `<NODE_GSA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com` |
+| `build/cloudbuild-*.yaml` | 镜像地址为 `${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}`：`PROJECT_ID` 由 Cloud Build 按 `--project` 自动填入；`_REGION`（默认 `us-central1`）和 `_AR_REPO`（默认 `ate-images`）可通过 `--substitutions` 覆盖 |
+
+唯一可能需要按需修改的是智能体人设：`openclaw-demo/build/actor/SOUL.md`、`IDENTITY.md`（默认是中文助手 “Ada”）。
 
 ---
 
@@ -376,8 +380,9 @@ kubectl -n openclaw create secret generic openclaw-feishu \
 
 ```bash
 cd $WORK/openclaw-demo
-gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --config build/cloudbuild-demo.yaml .        # gateway + actor
-gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --config build/cloudbuild-dashboard2.yaml .  # 控制台
+SUBS="_REGION=${GCE_REGION},_AR_REPO=${ARTIFACT_REGISTRY_REPOSITORY}"
+gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --substitutions=$SUBS --config build/cloudbuild-demo.yaml .        # gateway + actor
+gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --substitutions=$SUBS --config build/cloudbuild-dashboard2.yaml .  # 控制台
 ```
 
 | 镜像 | 内容 | 关键点 |
@@ -397,7 +402,7 @@ gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --config build/c
 ```bash
 cd $WORK/openclaw-demo/deploy
 source ../../substrate-gke/.ate-dev-env.sh
-kubectl apply -f computeclass.yaml          # 第 11 节的 Worker 节点类，WorkerPool 依赖它
+# 前提：已按 11.2 开启集群节点自动配置（NAP），ComputeClass 和 CapacityBuffer 依赖它
 FEISHU_PEERS=$(paste -sd, ../../secrets/feishu-peers.txt) \
 FEISHU_ENABLED=true \
 STORAGE=local \
@@ -406,6 +411,7 @@ STORAGE=local \
 
 `deploy.sh` 是幂等的，依次完成：
 
+0. 渲染并应用 Worker 节点类 **ComputeClass** `openclaw-workers`，以及 Standby **CapacityBuffer**（设置 `CAPACITY_BUFFER_ENABLED=false` 可跳过 buffer）
 1. 创建命名空间 `openclaw-workers`，部署 **WorkerPool** `openclaw`（默认 3 个 Worker，每个 request 500m/3.5Gi，limit 2CPU/4Gi）
 2. 创建命名空间 `openclaw`（打上 `ate.dev/api-access=true` 标签）和密钥
 3. 创建 **atespace** `openclaw-demo`，并通过 access policy 把 `editor` 角色授予网关和控制台的 SA
@@ -493,15 +499,15 @@ gcloud container clusters update $CLUSTER_NAME --zone $CLUSTER_LOCATION \
   --enable-autoprovisioning --min-cpu 0 --max-cpu 96 --min-memory 0 --max-memory 384 \
   --autoprovisioning-service-account ate-gke-node@${PROJECT_ID}.iam.gserviceaccount.com
 
-kubectl apply -f $WORK/openclaw-demo/deploy/computeclass.yaml
+# ComputeClass 由 deploy.sh 渲染并应用（deploy/computeclass.yaml.tmpl），无需手动 apply
 ```
 
-`computeclass.yaml` 的要点：`machineType: n2d-standard-4`、`nodePoolAutoCreation.enabled: true`、`whenUnsatisfiable: ScaleUpAnyway`。WorkerPool 通过 `nodeSelector: cloud.google.com/compute-class: openclaw-workers` 调度到这类节点。
+`computeclass.yaml.tmpl` 的要点：`machineType: n2d-standard-4`、`nodePoolAutoCreation.enabled: true`、`whenUnsatisfiable: ScaleUpAnyway`。WorkerPool 通过 `nodeSelector: cloud.google.com/compute-class: openclaw-workers` 调度到这类节点。
 
 ### 11.3 创建 Standby CapacityBuffer
 
 ```bash
-kubectl apply -f $WORK/openclaw-demo/deploy/capacitybuffer.yaml
+# deploy.sh 已自动应用 deploy/capacitybuffer.yaml，这里只需检查状态
 kubectl -n openclaw-workers get capacitybuffer openclaw-worker-standby -o yaml
 ```
 
@@ -531,6 +537,29 @@ kubectl -n openclaw-workers get capacitybuffer openclaw-worker-standby -o yaml
 
 ---
 
+### 11.5 缩容 / 节点回收时 actor 会不会丢记忆
+
+Worker Pod 被删除（控制器缩容、GKE 回收节点、节点升级、Spot 抢占）时，actor 的结果取决于它当时的状态：
+
+| actor 状态 | 结果 | 记忆 |
+|---|---|---|
+| `SUSPENDED`（快照已在 GCS） | 不受影响，下次唤醒到任意空闲 Worker | 完整保留 |
+| `SUSPENDING`（正在挂起） | Worker 收到 SIGTERM 后会等快照上传完成再退出，实测正常进入 `SUSPENDED` | 完整保留 |
+| `RUNNING`（正在对话） | 沙箱被终止，actor 变为 `CRASHED`；下一条消息到来时网关自动 `revert` 到最后一次挂起的快照，再重发消息 | 退回到**上一次挂起时**，只丢本次唤醒后的对话（通常 1–2 轮） |
+
+> [!IMPORTANT]
+> 网关必须使用**同步挂起**（`kubectl ate suspend --mode=sync`，代码包已内置）。Substrate 默认是异步挂起：快照先留在节点本地，稍后才上传 GCS。如果节点在上传前被回收，最新快照就丢了，唤醒时会 `CRASHED`，`revert` 也只能退回更早的快照。POC 中真实发生过一次：一个飞书用户的 actor 被退回到了 golden 初始状态。同步挂起每次多花约 10–15 秒，但发生在用户空闲之后，用户感知不到。
+
+实测（POC）：
+
+- 同步挂起后，快照立即是 `durableSnapshot: COMPLETED`。
+- 挂起过程中删除 Worker：actor 正常进入 `SUSPENDED`，记忆完整。
+- 运行中删除 Worker：actor 变为 `CRASHED`。下一条消息触发网关自动 `RevertActor`，19 秒后正常回复，保留了上次挂起前的记忆，丢失了崩溃前那一轮的新信息。
+
+可选的进一步加固（POC 未实现）：控制器给有 actor 在运行的 Worker Pod 打上 `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`，让 GKE 只回收全空闲的节点；缩容前先主动挂起目标 Worker 上的 actor。
+
+---
+
 ## 12. 验证清单
 
 | # | 验证项 | 操作 | 预期 |
@@ -548,6 +577,8 @@ kubectl -n openclaw-workers get capacitybuffer openclaw-worker-standby -o yaml
 | 11 | 并发扩容 | 在对话视图同时让 7 个模拟用户发消息 | Worker 3→7，节点增加，standby 节点恢复 |
 | 12 | 缩容 | 停止对话 | 冷却 180s 后每次缩 1 个 Worker |
 | 13 | 删除后自愈 | 在控制台删除某用户的 actor，该用户再发消息 | 自动重建并回复（之前的记忆会丢失） |
+| 14 | 挂起持久化 | 对话后等待 30s，执行 `kubectl ate get actor <name> -a openclaw-demo -o json \| jq '.status.snapshots'` | 最新快照的 `durableSnapshot.state` 为 `COMPLETED` |
+| 15 | 崩溃自愈 | actor 处于 RUNNING 时删除它的 Worker Pod，等状态变为 `CRASHED` 后再发消息 | 网关自动 revert 并回复，保留上次挂起前的记忆 |
 
 压测示例（7 个并发用户）：
 
@@ -608,19 +639,21 @@ curl -s http://$IP/api/state | jq '.autoscaler | {active, waiting, desired, repl
 | 9 | ActorTemplate 无法引用 K8s Secret | v1.0 的模板 env 不支持 `secretKeyRef` | 由 `deploy.sh` 渲染为字面值后创建，**渲染出的文件不落盘、不提交** |
 | 10 | 控制台删除 actor 后，该用户一直报 “⚠️ This model was not found” | 网关缓存了“actor 已存在”，router 对已删除的 actor 返回 404 | 插件遇到 404 时清除缓存，**从 golden 模板自动重建并重试一次**；空闲挂起器遇到 NotFound 时停止跟踪 |
 | 11 | 冷节点上的首个请求返回 504 | router 默认只让请求等待 5s（POC 中试过 90s 仍不够），而冷节点恢复需要约 47s | `atenet-router --parked-request-budget=180s`，并配合节点预热 |
+| 12 | 节点被回收后，用户收到 “The AI service is temporarily overloaded”，且记忆丢失 | 默认**异步挂起**，快照还在节点本地没上传，节点就被 GKE 回收；唤醒时找不到快照，actor 变为 `CRASHED`，router 返回 503 | 网关改用**同步挂起** `--mode=sync`，快照写入 GCS 后才算挂起完成 |
+| 13 | actor 运行中 Worker 被删除，之后一直报 503 | actor 进入 `CRASHED`，没有任何组件处理 | 网关收到 503 时先确认状态是 `CRASHED`，再自动 `RevertActor` 到最后一个已上传的快照，然后重发消息；空闲挂起器遇到 `CRASHED` 时停止重试 |
 
 ### 14.2 性能与弹性
 
 | # | 优化 | 效果 |
 |---|---|---|
-| 12 | **内存级快照**（`SNAPSHOT_FIDELITY_MEMORY`） | 唤醒后进程直接续跑，不重启 OpenClaw，热节点唤醒 1.4–7s（冷启动约 240s） |
-| 13 | **Worker 数少于用户数**，空闲 30s 自动挂起并让出 Worker | 3 个 Worker 即可服务数十个注册用户，资源按并发计费 |
-| 14 | **自定义扩缩容控制器**（active + spare，冷却 180s） | 检测到并发上升后 1 秒内扩容；缩容平滑，不会来回抖动 |
-| 15 | **GKE Standby CapacityBuffer**（NAP + ComputeClass） | 预留节点挂起时不收计算费用，恢复约 30s，比新建节点（2–3 分钟）快得多 |
-| 16 | **新节点预热**（warmup actor） | 把首个用户承担的约 45s 镜像解压提前完成；预热后该节点唤醒约 2s |
-| 17 | Worker 规格对齐节点（request 500m / 3.5Gi，n2d-standard-4 放 3 个） | 装箱率高，buffer 的一个“chunk”正好对应一个 Worker |
-| 18 | 评估过 GKE Image Streaming | **对沙箱无效**：atelet 自带镜像缓存，不走 containerd。仅对普通 Pod 镜像有用 |
-| 19 | 可选：`AUTOSCALE_SPARE=2` | 新用户在扩容瞬间不再等待节点（代价是多一个常驻空闲 Worker） |
+| 14 | **内存级快照**（`SNAPSHOT_FIDELITY_MEMORY`） | 唤醒后进程直接续跑，不重启 OpenClaw，热节点唤醒 1.4–7s（冷启动约 240s） |
+| 15 | **Worker 数少于用户数**，空闲 30s 自动挂起并让出 Worker | 3 个 Worker 即可服务数十个注册用户，资源按并发计费 |
+| 16 | **自定义扩缩容控制器**（active + spare，冷却 180s） | 检测到并发上升后 1 秒内扩容；缩容平滑，不会来回抖动 |
+| 17 | **GKE Standby CapacityBuffer**（NAP + ComputeClass） | 预留节点挂起时不收计算费用，恢复约 30s，比新建节点（2–3 分钟）快得多 |
+| 18 | **新节点预热**（warmup actor） | 把首个用户承担的约 45s 镜像解压提前完成；预热后该节点唤醒约 2s |
+| 19 | Worker 规格对齐节点（request 500m / 3.5Gi，n2d-standard-4 放 3 个） | 装箱率高，buffer 的一个“chunk”正好对应一个 Worker |
+| 20 | 评估过 GKE Image Streaming | **对沙箱无效**：atelet 自带镜像缓存，不走 containerd。仅对普通 Pod 镜像有用 |
+| 21 | 可选：`AUTOSCALE_SPARE=2` | 新用户在扩容瞬间不再等待节点（代价是多一个常驻空闲 Worker） |
 
 ---
 
@@ -634,7 +667,8 @@ POC 实测数据（gVisor，n2d-standard-4 Worker 节点，Gemini Flash 模型�
 | 新用户首次对话（热节点） | ~50s | 创建 actor + 出网策略 + 从 golden 恢复 + 首次模型调用 |
 | 老用户唤醒（热节点） | **5–6s**（其中恢复 1.4–7s） | 下载快照约 1–2s，恢复约 2s |
 | 老用户唤醒（未预热的新节点） | ~60s | download ~10s + **oci_unpack ~45s** + restore ~2s |
-| 沙箱挂起（快照写入） | 1–8s | |
+| 沙箱挂起（同步，快照写入 GCS） | ~15s | 用户空闲后在后台执行，用户无感知 |
+| 崩溃后自动恢复（revert + 唤醒 + 回复） | ~19s | |
 | Worker 扩容决策 | < 1s | 3→7 |
 | standby 节点恢复 | ~30s | 挂起 → Ready |
 | 新节点预热 | ~48s | 预热完成后该节点唤醒约 2s |
@@ -649,6 +683,7 @@ POC 实测数据（gVisor，n2d-standard-4 Worker 节点，Gemini Flash 模型�
 |---|---|---|
 | 飞书 @机器人 没反应 | `kubectl -n openclaw logs deploy/openclaw-gateway -c gateway \| grep feishu` | 没有任何 received 日志：检查权限、事件订阅（长连接 + `im.message.receive_v1`）和版本是否已发布；日志里有 `groupPolicy=disabled`：检查群聊配置 |
 | 回复 “Couldn't sign in to the AI service” | 网关日志中查看 `dispatching to agent` 的 session | 应该是 `acp:...` 形式。如果不是，确认插件版本包含自动路由兜底 |
+| 回复 “The AI service is temporarily overloaded” | `kubectl ate get actors -a openclaw-demo` 查看是否为 `CRASHED` | actor 崩溃了。新版网关会自动 revert；也可以手动执行 `kubectl ate revert actor <name> -a openclaw-demo` |
 | 回复 “⚠️ This model was not found” | `kubectl ate get actors -a openclaw-demo` | actor 被删除了。确认网关已更新到包含 404 自愈的版本，用户再发一次即可 |
 | 504 / 等很久没回复 | `kubectl -n ate-system logs deploy/atenet-router` | 确认 `--parked-request-budget=180s`；查看是否有 Worker 空闲（`kubectl ate get workers`） |
 | actor 卡在 RESUMING | `kubectl ate logs actor <name> -a openclaw-demo` | 使用 Filestore 时检查 VolumePool 实例状态和 NFS 挂载 |
@@ -691,7 +726,7 @@ curl -s http://<EXTERNAL-IP>/api/state | jq .autoscaler
 ```bash
 cd $WORK/substrate-gke && source .ate-dev-env.sh
 kubectl delete -f $WORK/openclaw-demo/deploy/capacitybuffer.yaml --ignore-not-found
-kubectl delete -f $WORK/openclaw-demo/deploy/computeclass.yaml --ignore-not-found
+kubectl delete computeclass openclaw-workers --ignore-not-found
 # 删除集群（含其上所有工作负载）、快照桶、GSA、IAM 绑定等；脚本会先要求确认
 ./tools/cleanup-gcp --project $PROJECT_ID --cluster $CLUSTER_NAME --location $CLUSTER_LOCATION --bucket $BUCKET_NAME
 ```
@@ -724,6 +759,6 @@ openclaw-demo/
     ├── deploy.sh               # 一键部署
     ├── workerpool.yaml.tmpl, actortemplate.yaml.tmpl, gateway.yaml.tmpl, dashboard.yaml.tmpl
     ├── egress-policy.yaml
-    ├── computeclass.yaml
+    ├── computeclass.yaml.tmpl
     └── capacitybuffer.yaml
 ```
