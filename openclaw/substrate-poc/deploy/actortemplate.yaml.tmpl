@@ -20,10 +20,13 @@ containers:
   # Gate the golden checkpoint (and every resume) on OpenClaw being fully up:
   # cold boot inside gVisor takes minutes (first-run SQLite init), so the
   # default 20s warmup would snapshot a half-booted process.
+  # Port 8079 opens only after the entrypoint has run one local warm-up turn
+  # (build/actor/entrypoint.sh), so the golden captures a fully initialised
+  # agent runtime instead of OpenClaw's lazy first-turn init (~40s per new user).
   wakeupProbe:
     httpGet:
-      path: /readyz
-      port: 80
+      path: /
+      port: 8079
     timeoutSeconds: 900
   volumeMounts:
   - name: system-info

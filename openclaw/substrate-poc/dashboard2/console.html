@@ -5,76 +5,122 @@
 <title>OpenClaw on Agent Substrate · 管理控制台</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-:root{--bg:#0b1020;--panel:#121a2e;--panel2:#18223b;--line:#26324f;--text:#e6ecff;--muted:#8b97b8;
---green:#34d399;--yellow:#fbbf24;--cyan:#22d3ee;--red:#f87171;--blue:#60a5fa;--purple:#a78bfa}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,"PingFang SC","Noto Sans SC",Segoe UI,Roboto,sans-serif}
-header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line);background:#0e1529}
-header h1{font-size:18px;margin:0}header .sub{color:var(--muted);font-size:12px}
-header a{color:var(--cyan);text-decoration:none;margin-left:auto;border:1px solid var(--line);padding:6px 12px;border-radius:8px}
-main{padding:18px 22px;display:grid;gap:16px}
-.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
-.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
-.kpi .v{font-size:26px;font-weight:700}.kpi .l{color:var(--muted);font-size:12px}
+/* Palette and layout follow the always-on-agent demo dashboard (GitHub dark). */
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#010409;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;
+--green:#3fb950;--green-bg:rgba(63,185,80,.1);--red:#f85149;--cyan:#79c0ff;--yellow:#e3b341;--orange:#d29922;--pink:#f778ba;--purple:#bc8cff;--blue:#58a6ff}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;background:var(--bg);color:var(--text);line-height:1.5;font-size:13px;
+  font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,"PingFang SC","Noto Sans SC",monospace;max-width:100vw;overflow-x:hidden}
+header{border-bottom:2px solid var(--green);padding-bottom:12px;margin-bottom:20px;display:flex;align-items:center;gap:16px}
+header h1{font-size:16px;margin:0;color:var(--green);font-weight:800;letter-spacing:.5px}
+header .sub{color:var(--muted);font-size:11px;margin-top:2px}
+header .right{margin-left:auto;display:flex;align-items:center;gap:14px}
+header .sync{font-size:11px;color:var(--muted)}
+header a{color:var(--cyan);text-decoration:none;border:1px solid var(--line);padding:5px 12px;border-radius:5px;font-size:12px;background:var(--panel)}
+header a:hover{border-color:var(--cyan)}
+main{display:grid;gap:16px}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 10px;text-align:center}
+.kpi .v{font-size:26px;font-weight:800;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+.kpi .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px}
+.kpis .kpi:nth-child(1) .v{color:var(--cyan)}.kpis .kpi:nth-child(2) .v{color:var(--green)}
+.kpis .kpi:nth-child(3) .v{color:var(--muted)}.kpis .kpi:nth-child(4){border-color:var(--pink)}.kpis .kpi:nth-child(4) .v{color:var(--pink)}
+.kpis .kpi:nth-child(5) .v{color:var(--yellow)}.kpis .kpi:nth-child(6) .v{color:var(--accent)}
 .grid2{display:grid;grid-template-columns:2fr 1fr;gap:16px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
-.card h2{font-size:14px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
-.card h2 .hint{color:var(--muted);font-weight:400;font-size:12px}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
-th{color:var(--muted);font-weight:500;font-size:12px}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid}
-.RUNNING{color:var(--green);border-color:var(--green)}.RESUMING{color:var(--cyan);border-color:var(--cyan)}
-.SUSPENDING{color:var(--yellow);border-color:var(--yellow)}.SUSPENDED{color:var(--muted);border-color:var(--muted)}
-.CRASHED,.DELETING{color:var(--red);border-color:var(--red)}
-.small{font-size:12px;color:var(--muted)}.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
-button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:4px 9px;cursor:pointer;font-size:12px}
-button:hover{border-color:var(--cyan)}button.warn:hover{border-color:var(--red)}
-.workers{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
-.worker{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px;border-left-width:4px}
-.worker.busy{border-left-color:var(--green)}.worker.free{border-left-color:var(--muted)}
-.tl{max-height:420px;overflow:auto}.tl .row{display:flex;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line);font-size:12px}
-.tl .t{color:var(--muted);width:64px;flex:none}.tl .k{width:84px;flex:none;font-weight:600}
-.k.resume{color:var(--cyan)}.k.active{color:var(--green)}.k.suspend,.k.suspending{color:var(--yellow)}.k.crash{color:var(--red)}.k.create,.k.manual{color:var(--purple)}.k.scale-up,.k.warmup-done{color:var(--green)}.k.scale-down,.k.warmup-start,.k.warmup-retry{color:var(--cyan)}.k.warmup-failed{color:var(--red)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;min-width:0}
+.card h2{font-size:10px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;
+  border-left:3px solid var(--green);padding-left:8px;display:flex;align-items:center;gap:8px;font-weight:700}
+.card h2 .hint{color:var(--muted);font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;font-style:italic}
+.card.c-fleet h2{border-left-color:var(--green)}.card.c-tl h2{border-left-color:var(--cyan)}
+.card.c-as h2{border-left-color:var(--yellow)}.card.c-wp h2{border-left-color:var(--pink)}.card.c-flow h2{border-left-color:var(--cyan)}
+.card.c-log h2{border-left-color:var(--purple)}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px dashed var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--line)}
+tbody tr:hover{background:rgba(88,166,255,.04)}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;border:1px solid var(--line)}
+.RUNNING{background:var(--green-bg);color:var(--green);border-color:var(--green);animation:pulse 2s infinite}
+.RESUMING{background:rgba(121,192,255,.1);color:var(--cyan);border-color:var(--cyan);animation:pulse 1s infinite}
+.SUSPENDING{background:rgba(227,179,65,.1);color:var(--yellow);border-color:var(--yellow)}
+.SUSPENDED{background:rgba(139,148,158,.1);color:var(--muted);border-color:var(--muted)}
+.CRASHED,.DELETING{background:rgba(248,81,73,.1);color:var(--red);border-color:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.small{font-size:11px;color:var(--muted)}.mono{font-size:12px}
+button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:4px 9px;cursor:pointer;font-size:11px;font-family:inherit}
+button:hover{border-color:var(--cyan);color:var(--cyan)}button.warn:hover{border-color:var(--red);color:var(--red)}
+button.primary{background:var(--yellow);color:#0d1117;border:none;font-weight:800;padding:5px 12px}button.primary:hover{opacity:.85;color:#0d1117}
+.workers{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.worker{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:10px 12px;transition:all .3s}
+.worker.busy{border-color:var(--green);box-shadow:0 0 12px rgba(63,185,80,.15)}
+.tl{max-height:430px;overflow:auto}
+.tl .row{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px dashed var(--line);font-size:11px}
+.tl .t{color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+.tl .k{flex:none;display:inline-block;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:800;text-transform:uppercase;border:1px solid;color:var(--muted)}
+.k.resume,.k.scale-down,.k.warmup-start,.k.warmup-retry{color:var(--cyan)}.k.active,.k.scale-up,.k.warmup-done{color:var(--green)}
+.k.suspend,.k.suspending{color:var(--yellow)}.k.crash,.k.warmup-failed{color:var(--red)}.k.create,.k.manual{color:var(--purple)}
+.tl .d{color:var(--muted);min-width:0}.tl .d .mono{color:var(--text)}
 .vol-on{color:var(--green)}.vol-off{color:var(--muted)}
-.bar{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.bar>i{display:block;height:100%;background:var(--yellow)}
-pre.logs{background:#060a14;border:1px solid var(--line);border-radius:8px;padding:10px;max-height:340px;overflow:auto;white-space:pre-wrap;font-size:11px}
-.err{color:var(--red);font-size:12px}
-.flow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}
-.flow b{color:var(--text);background:var(--panel2);border:1px solid var(--line);padding:3px 8px;border-radius:6px;font-weight:500}
+.bar{height:4px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:4px}.bar>i{display:block;height:100%;background:var(--yellow)}
+pre.logs{background:var(--panel2);border:1px solid #000;border-radius:4px;padding:12px;max-height:340px;overflow:auto;white-space:pre-wrap;font-size:11px}
+.err{color:var(--red);font-size:11px}
+td.ops{white-space:nowrap}.kpi .l.cond{text-transform:none;letter-spacing:0;font-size:10px;line-height:1.4}
+#autoscale .kpi:nth-child(4){border-color:var(--line)}#autoscale .kpi:nth-child(4) .v{color:var(--cyan)}
+.flow{display:flex;align-items:center;gap:14px;justify-content:center;padding:6px 0;flex-wrap:wrap}
+.flow-node{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:9px 16px;text-align:center;font-size:11px;min-width:120px;transition:opacity .4s,filter .4s}
+.flow-node b{font-size:12px}.flow-node span{color:var(--muted)}
+.flow-node.gw{border-color:var(--green)}.flow-node.gw span{color:var(--green)}
+.flow-node.ate{border-color:var(--cyan)}.flow-node.actor{border-color:var(--pink)}.flow-node.store{border-color:var(--yellow)}
+.flow-arrow{color:var(--muted);font-size:18px;transition:opacity .4s}
+.flow-node.dim{opacity:.3;filter:grayscale(1)}.flow-arrow.dim{opacity:.2}.flow-node.active{animation:pulse 1.2s infinite}
+.pager{display:flex;gap:6px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:11px;color:var(--muted)}
+.pager button.on{border-color:var(--green);color:var(--green)}.pager button:disabled{opacity:.35;cursor:default;border-color:var(--line);color:var(--text)}
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>🦞 OpenClaw on Agent Substrate · 管理控制台</h1>
-    <div class="sub">GKE · gVisor 沙箱 · Filestore VolumePool 存储 · 飞书通道 · 空闲自动 Suspend / 消息自动 Resume</div>
+    <div class="sub">GKE · gVisor 沙箱 · 飞书通道 · 空闲自动 Suspend / 消息自动 Resume · 弹性 Worker + Standby Buffer</div>
   </div>
-  <a href="/chat" target="_blank">打开「终端用户飞书对话」视图 ↗</a>
+  <div class="right"><span class="sync" id="sync">连接中…</span><a href="/chat" target="_blank">终端用户飞书对话视图 ↗</a></div>
 </header>
 <main>
-  <div class="flow">请求路径：<b>飞书用户</b>→<b>OpenClaw Gateway（常驻，WebSocket）</b>→<b>atenet-router（自动唤醒）</b>→<b>gVisor Actor（每会话一个）</b>⇄<b>Filestore 卷</b>+<b>GCS 快照</b></div>
+  <section class="card c-flow">
+    <h2>请求路径 <span class="hint">实时：灰色 = 当前没有流量经过</span></h2>
+    <div class="flow">
+      <div class="flow-node"><b>飞书用户</b><br><span>私聊 / 群 @</span></div><div class="flow-arrow">→</div>
+      <div class="flow-node gw"><b>OpenClaw Gateway</b><br><span>常驻 · WebSocket</span></div><div class="flow-arrow" id="fa2">→</div>
+      <div class="flow-node ate" id="fn-ate"><b>atenet-router</b><br><span id="fn-ate-s">按需唤醒</span></div><div class="flow-arrow" id="fa3">→</div>
+      <div class="flow-node actor" id="fn-actor"><b>gVisor Actor</b><br><span id="fn-actor-s">--</span></div><div class="flow-arrow" id="fa4">⇄</div>
+      <div class="flow-node store" id="fn-store"><b>GCS 快照</b><br><span id="fn-store-s">--</span></div><div class="flow-arrow" id="fa5">→</div>
+      <div class="flow-node" id="fn-llm"><b>Gemini API</b><br><span>LLM</span></div>
+    </div>
+  </section>
   <section class="kpis" id="kpis"></section>
   <section class="grid2">
-    <div class="card">
+    <div class="card c-fleet">
       <h2>OpenClaw 实例 <span class="hint" id="as"></span>
-        <span style="margin-left:auto"></span><button onclick="act('suspend-all',{})">全部挂起</button></h2>
+        <span style="margin-left:auto"></span><button class="primary" onclick="act('suspend-all',{})">⏸ 全部挂起</button></h2>
       <div id="errs"></div>
       <table><thead><tr><th>实例 / 飞书用户</th><th>状态</th><th>计算资源</th><th>Filestore 卷</th><th>Pod 快照</th><th>空闲倒计时</th><th>操作</th></tr></thead>
       <tbody id="actors"></tbody></table>
+      <div class="pager" id="pager"></div>
     </div>
-    <div class="card">
+    <div class="card c-tl">
       <h2>生命周期时间轴 <span class="hint">最新在上</span></h2>
       <div class="tl" id="timeline"></div>
     </div>
   </section>
-  <section class="card">
+  <section class="card c-as">
     <h2>自动扩缩容 <span class="hint">WorkerPool autoscaler + GKE Standby Capacity Buffer</span></h2>
     <div id="autoscale"></div>
   </section>
-  <section class="card">
+  <section class="card c-wp">
     <h2>gVisor Worker 资源池 <span class="hint" id="wp"></span></h2>
     <div class="workers" id="workers"></div>
   </section>
-  <section class="card" id="logcard" style="display:none">
+  <section class="card c-log" id="logcard" style="display:none">
     <h2>沙箱日志 <span class="hint" id="logname"></span><span style="margin-left:auto"></span><button onclick="document.getElementById('logcard').style.display='none'">关闭</button></h2>
     <pre class="logs" id="logs"></pre>
   </section>
@@ -85,6 +131,10 @@ const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&g
 const clock=t=>new Date(t).toLocaleTimeString("zh-CN",{hour12:false});
 const short=s=>s&&s.length>26?s.slice(0,12)+"…"+s.slice(-10):s;
 let last=null;
+const PAGE_SIZE=5;let page=1;
+// RUNNING first, then other in-flight states, then SUSPENDED; ties: most recently active first.
+const STATE_ORDER={RUNNING:0,RESUMING:1,SUSPENDING:2,CRASHED:3,DELETING:4,SUSPENDED:5};
+function goPage(n){page=n;if(last)render(last);}
 async function act(kind,body){
   try{const r=await fetch("/api/actor/"+kind,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json();
@@ -112,7 +162,16 @@ function render(d){
   $("as").textContent=`atespace: ${d.atespace} · template: ${d.template} · 空闲超时 ${d.observer?.idleTimeoutSeconds||"?"}s`;
   $("errs").innerHTML=Object.entries(d.errors||{}).map(([k,v])=>`<div class="err">${k}: ${esc(v)}</div>`).join("");
   const idle=(d.observer?.idleTimeoutSeconds||0)*1000;
-  $("actors").innerHTML=A.length?A.map(a=>{
+  const lastAct=a=>(convFor(d,a.name)?.lastActivity)||0;
+  const sorted=[...A].sort((x,y)=>((STATE_ORDER[x.status]??9)-(STATE_ORDER[y.status]??9))||(lastAct(y)-lastAct(x))||x.name.localeCompare(y.name));
+  const pages=Math.max(1,Math.ceil(sorted.length/PAGE_SIZE));
+  if(page>pages)page=pages;
+  const pageItems=sorted.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE);
+  $("pager").innerHTML=sorted.length>PAGE_SIZE?`<span>共 ${sorted.length} 个 · 第 ${page}/${pages} 页</span>
+    <button ${page<=1?"disabled":""} onclick="goPage(${page-1})">‹ 上一页</button>
+    ${Array.from({length:pages},(_,i)=>`<button class="${i+1===page?"on":""}" onclick="goPage(${i+1})">${i+1}</button>`).join("")}
+    <button ${page>=pages?"disabled":""} onclick="goPage(${page+1})">下一页 ›</button>`:"";
+  $("actors").innerHTML=A.length?pageItems.map(a=>{
     const c=convFor(d,a.name);
     const who=c?`${esc(c.displayName||c.peer)} <span class="small">(${esc(c.channel)})</span>`:'<span class="small">未关联会话</span>';
     const compute=a.workerPod?`<div class="mono">${esc(a.workerPod)}</div><div class="small">${esc(a.node)}</div>`:'<span class="small">已释放</span>';
@@ -129,9 +188,16 @@ function render(d){
     return `<tr><td><div class="mono">${esc(a.name)}</div><div>${who}</div></td>
       <td><span class="badge ${a.status}">${a.status}</span>${a.crash?`<div class="err">${esc(a.crash)}</div>`:""}</td>
       <td>${compute}</td><td>${vol}</td><td>${snap}</td><td>${cd}</td>
-      <td><button onclick="act('resume',{name:'${a.name}'})">唤醒</button> <button onclick="act('suspend',{name:'${a.name}'})">挂起</button>
+      <td class="ops"><button onclick="act('resume',{name:'${a.name}'})">唤醒</button> <button onclick="act('suspend',{name:'${a.name}'})">挂起</button>
       <button onclick="act('logs',{name:'${a.name}'})">日志</button> <button class="warn" onclick="if(confirm('删除 ${a.name}？'))act('delete',{name:'${a.name}'})">删除</button></td></tr>`;
   }).join(""):'<tr><td colspan="7" class="small">还没有 Actor。飞书用户发出第一条消息时，Gateway 会自动创建。</td></tr>';
+  {const run=cnt("RUNNING"),res=cnt("RESUMING"),sus=cnt("SUSPENDING");const live=run+res+sus>0;
+   const set=(id,on,act)=>{const e=$(id);if(!e)return;e.classList.toggle("dim",!on);if(act!==undefined)e.classList.toggle("active",act)};
+   set("fa2",live);set("fn-ate",live,res>0);set("fa3",live);set("fn-actor",live,run>0);set("fa4",true);set("fn-store",true,res+sus>0);set("fa5",run>0);set("fn-llm",run>0);
+   $("fn-ate-s").textContent=res?`正在唤醒 ${res} 个`:live?"路由中":"空闲（零常驻）";
+   $("fn-actor-s").textContent=run?`${run} 个 RUNNING`:sus?`${sus} 个挂起中`:"全部休眠";
+   $("fn-store-s").textContent=res?"恢复快照中":sus?"写入快照中":`${cnt("SUSPENDED")} 份快照`;
+   $("sync").textContent="● 已同步 "+clock(Date.now());$("sync").style.color="var(--green)";}
   $("wp").textContent=`${busy} 占用 / ${W.length} 总数（每个 Worker Pod 承载一个 OpenClaw 沙箱）`;
   $("workers").innerHTML=W.map(w=>`<div class="worker ${w.actor?"busy":"free"}"><div class="mono">${esc(w.pod)}</div>
     <div class="small">${esc(w.node)} · ${esc(w.state)}</div>
@@ -145,14 +211,14 @@ function render(d){
       <div class="kpi"><div class="v">${as.desired??"–"}</div><div class="l">目标 Worker 数（min ${as.min} / max ${as.max} / 预留 ${as.spare}）</div></div>
       <div class="kpi"><div class="v">${as.readyReplicas??"–"} / ${as.replicas??"–"}</div><div class="l">就绪 / 期望 Worker Pod</div></div>
       <div class="kpi"><div class="v">${(as.nodes||[]).filter(n=>n.ready).length} / ${(as.nodes||[]).length}</div><div class="l">Worker 节点（就绪 / 总数）</div></div>
-      <div class="kpi"><div class="v" style="font-size:16px">${esc(b.strategy||"–").replace("buffer.gke.io/","")}</div><div class="l">Capacity Buffer：${bcond}</div></div>
+      <div class="kpi"><div class="v" style="font-size:16px">${esc(b.strategy||"–").replace("buffer.gke.io/","")}</div><div class="l cond">Capacity Buffer：${bcond}</div></div>
     </div>
     <div class="small" style="margin-top:8px">${as.lastAction?"最近动作："+esc(as.lastAction):""} ${as.lastError?'<span class="err">'+esc(as.lastError)+'</span>':""}</div>
     <div class="small" style="margin-top:4px">${(as.nodes||[]).map(n=>{const w=(as.warmNodes||[]).includes(n.name);const ing=as.warming&&as.warming.node===n.name;return `<span class="mono">${esc(n.name.replace("gke-openclaw-demo-",""))}</span> ${n.ready?"🟢":"⏳"} ${ing?"⏳预热中 "+as.warming.elapsedSec+"s":w?"🔥已预热":"❄️冷节点"}`}).join(" · ")}</div>`;
   const tl=[...(d.timeline||[]),...(d.observer?.events||[]).map(e=>({at:e.at,actor:e.actor,kind:e.kind,detail:e.detail})),...((d.autoscaler||{}).events||[]).map(e=>({at:e.at,actor:"workerpool",kind:e.kind,detail:e.detail}))].sort((x,y)=>y.at-x.at).slice(0,120);
-  $("timeline").innerHTML=tl.map(t=>`<div class="row"><span class="t">${clock(t.at)}</span><span class="k ${t.kind}">${esc(t.kind)}</span><span><span class="mono">${esc(t.actor)}</span> ${esc(t.detail)}</span></div>`).join("")||'<span class="small">暂无事件</span>';
+  $("timeline").innerHTML=tl.map(t=>`<div class="row"><span class="t">${clock(t.at)}</span><span class="k ${t.kind}">${esc(t.kind)}</span><span class="d"><span class="mono">${esc(t.actor)}</span> ${esc(t.detail)}</span></div>`).join("")||'<span class="small">暂无事件</span>';
 }
-async function refresh(){try{const d=await (await fetch("/api/state")).json();last=d;render(d)}catch(e){}}
+async function refresh(){try{const d=await (await fetch("/api/state")).json();last=d;render(d)}catch(e){const y=$("sync");if(y){y.textContent="● 连接中断，重试中…";y.style.color="var(--red)"}}}
 setInterval(refresh,1500);refresh();
 setInterval(()=>{if(last){last.now+=500;render(last)}},500);
 </script>

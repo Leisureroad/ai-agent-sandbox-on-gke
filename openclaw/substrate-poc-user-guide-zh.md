@@ -139,7 +139,7 @@ sequenceDiagram
 
 - 一个有 Owner（或同等权限）的 GCP 项目，已绑定结算账号
 - 启用 API：`container`、`compute`、`artifactregistry`、`cloudbuild`、`storage`、`iam`、`file`（使用 Filestore 时）
-- 配额：所选区域至少 **40 vCPU**（2×n2d-standard-8 系统节点 + 若干 n2d-standard-4 Worker 节点 + 弹性余量）
+- 配额：所选区域至少 **40 vCPU**（2×n2d-standard-8 系统节点 + 1–2 台 n2d-standard-8 Worker 节点（含 standby）+ 弹性余量）
 - 如需 Filestore 存储：在**同一 VPC、同一区域**内已有或可创建 Filestore **VolumePool**
 
 > [!TIP]
@@ -412,11 +412,11 @@ STORAGE=local \
 `deploy.sh` 是幂等的，依次完成：
 
 0. 渲染并应用 Worker 节点类 **ComputeClass** `openclaw-workers`，以及 Standby **CapacityBuffer**（设置 `CAPACITY_BUFFER_ENABLED=false` 可跳过 buffer）
-1. 创建命名空间 `openclaw-workers`，部署 **WorkerPool** `openclaw`（默认 3 个 Worker，每个 request 500m/3.5Gi，limit 2CPU/4Gi）
+1. 创建命名空间 `openclaw-workers`，部署 **WorkerPool** `openclaw`（默认 3 个 Worker，每个 request 500m/3.5Gi，limit 4CPU/4Gi）
 2. 创建命名空间 `openclaw`（打上 `ate.dev/api-access=true` 标签）和密钥
 3. 创建 **atespace** `openclaw-demo`，并通过 access policy 把 `editor` 角色授予网关和控制台的 SA
-4. 创建 golden **ActorTemplate**（`openclaw-agent-local` 或 `openclaw-agent`）：
-   - `wakeupProbe: GET /readyz, timeout 900s`：确保 golden 快照在 OpenClaw 完全启动后才生成
+4. 创建 golden **ActorTemplate**（`openclaw-agent-warm`，Filestore 模式为 `openclaw-agent-warm-fs`）：
+   - `wakeupProbe: GET :8079/, timeout 900s`：actor 镜像的 entrypoint 在 OpenClaw `/readyz` 通过后，先在沙箱内跑一次本地预热对话，再打开 8079 端口。golden 因此包含**完整初始化后的 agent 运行时**，新用户首轮不用再等约 40 秒的懒加载（详见 14.3）
    - `preferredFidelity: SNAPSHOT_FIDELITY_MEMORY`：连同进程内存一起快照，唤醒后直接接着对话
    - 资源：1 vCPU / 2.5 GiB
 5. 部署 **Gateway**（OpenClaw + substrate 插件 + Envoy mTLS sidecar）和 **Dashboard**（含 LoadBalancer）
@@ -484,7 +484,7 @@ flowchart TD
 | 层 | 机制 | 作用 |
 |---|---|---|
 | Worker 层 | 自定义控制器（控制台内置）按活跃用户数扩缩 WorkerPool | 秒级响应，决定跑多少个沙箱槽位 |
-| 节点层 | GKE NAP + ComputeClass `openclaw-workers` | 按 Pending Pod 自动创建或回收 n2d-standard-4 节点（每节点放 3 个 Worker） |
+| 节点层 | GKE NAP + ComputeClass `openclaw-workers` | 按 Pending Pod 自动创建或回收 n2d-standard-8 节点（每节点最多放 7 个 Worker） |
 | 预备层 | GKE **CapacityBuffer（standby）** | 预留一台已初始化并**挂起**的节点：闲置时不收计算费用，需要时约 30 秒恢复 |
 
 > [!NOTE]
@@ -502,7 +502,7 @@ gcloud container clusters update $CLUSTER_NAME --zone $CLUSTER_LOCATION \
 # ComputeClass 由 deploy.sh 渲染并应用（deploy/computeclass.yaml.tmpl），无需手动 apply
 ```
 
-`computeclass.yaml.tmpl` 的要点：`machineType: n2d-standard-4`、`nodePoolAutoCreation.enabled: true`、`whenUnsatisfiable: ScaleUpAnyway`。WorkerPool 通过 `nodeSelector: cloud.google.com/compute-class: openclaw-workers` 调度到这类节点。
+`computeclass.yaml.tmpl` 的要点：`machineType: n2d-standard-8`、`nodePoolAutoCreation.enabled: true`、`whenUnsatisfiable: ScaleUpAnyway`。WorkerPool 通过 `nodeSelector: cloud.google.com/compute-class: openclaw-workers` 调度到这类节点。
 
 ### 11.3 创建 Standby CapacityBuffer
 
@@ -512,7 +512,7 @@ kubectl -n openclaw-workers get capacitybuffer openclaw-worker-standby -o yaml
 ```
 
 - `PodTemplate openclaw-worker-shape`：与 Worker Pod 相同的规格（500m / 3584Mi，带 compute-class 容忍）
-- `CapacityBuffer`：`provisioningStrategy: buffer.gke.io/standby-capacity`，`replicas: 3`，即预留一整台 n2d-standard-4 节点
+- `CapacityBuffer`：`provisioningStrategy: buffer.gke.io/standby-capacity`，`replicas: 7`，即预留一整台 n2d-standard-8 节点
 
 约 5 分钟后，GKE 会创建一台节点，初始化完成后把它**挂起**。可在 Compute Engine 实例列表中看到它处于 `SUSPENDED` 状态。
 
@@ -651,20 +651,49 @@ curl -s http://$IP/api/state | jq '.autoscaler | {active, waiting, desired, repl
 | 16 | **自定义扩缩容控制器**（active + spare，冷却 180s） | 检测到并发上升后 1 秒内扩容；缩容平滑，不会来回抖动 |
 | 17 | **GKE Standby CapacityBuffer**（NAP + ComputeClass） | 预留节点挂起时不收计算费用，恢复约 30s，比新建节点（2–3 分钟）快得多 |
 | 18 | **新节点预热**（warmup actor） | 把首个用户承担的约 45s 镜像解压提前完成；预热后该节点唤醒约 2s |
-| 19 | Worker 规格对齐节点（request 500m / 3.5Gi，n2d-standard-4 放 3 个） | 装箱率高，buffer 的一个“chunk”正好对应一个 Worker |
+| 19 | Worker 规格对齐节点（request 500m / 3.5Gi，n2d-standard-8 放 7 个，Worker CPU limit 4） | 装箱率高，buffer 的一个“chunk”正好对应一个 Worker；每台节点放的 Worker 多，actor 唤醒时更容易命中节点本地快照 |
 | 20 | 评估过 GKE Image Streaming | **对沙箱无效**：atelet 自带镜像缓存，不走 containerd。仅对普通 Pod 镜像有用 |
 | 21 | 可选：`AUTOSCALE_SPARE=2` | 新用户在扩容瞬间不再等待节点（代价是多一个常驻空闲 Worker） |
+| 22 | **预热 golden**（entrypoint 本地预热 + wakeupProbe 8079） | 新用户首轮从约 49s 降到约 12s（见 14.3） |
+| 23 | **精简 actor 插件**（`plugins.allow`） | 运行时加载的插件从 14 个降到 1 个，快照小约 6%（见 14.3） |
+| 24 | **控制台**：实例分页（每页 5 个，RUNNING 排前）、实时请求路径图 | 实例多时也方便定位活跃用户 |
+
+### 14.3 唤醒时延分析（与上游 WhatsApp demo 对比）
+
+POC 中发现，上游 WhatsApp demo（Substrate release-0.1 + OpenClaw 2026.8.2）的唤醒明显比本方案快。用 atelet 的 `Restore timing breakdown` 日志和 GCS 中的快照对象逐项对比后，结论如下：
+
+| 指标 | WhatsApp demo | 本方案 |
+|---|---|---|
+| 内存快照（`pages.img.zstd`） | 74–95 MB | 约 320–340 MB |
+| 从 GCS 下载的唤醒 | 2.5–3.7s | 13–17s（其中下载 11–15s） |
+| 命中节点本地快照的唤醒 | — | 1.4–1.7s |
+
+| 实验 | 结果 | 结论 |
+|---|---|---|
+| Worker 节点 n2d-standard-4 → n2d-standard-8，Worker CPU limit 2 → 4 | 下载耗时没有改善（11.7–15.2s 对比 12.3s） | 瓶颈不在节点网络或 CPU，而在快照大小 |
+| 限制 V8 堆 `NODE_OPTIONS=--max-old-space-size=768` | 快照 348.6 MB 对比 338.9 MB，基本无变化 | 快照大不是 JS 堆膨胀造成的 |
+| 抓取新 actor 第一轮的日志 | 恢复约 6s，之后有约 30s 在加载插件 SDK、工具 schema 和 embedded agent；`post-ready.startup-maintenance` 在 ready **之后**才开始 | **根因**：OpenClaw 2026.11 的 `/readyz` 通过得太早，agent 运行时要等第一条消息才懒加载；golden 抓在懒加载之前，每个新用户首轮都要补一次初始化，进程内存也从 181 MB 涨到约 339 MB |
+
+据此做了两项优化（代码包已内置）：
+
+- **A. 预热 golden**（`build/actor/entrypoint.sh`）：OpenClaw 启动、`/readyz` 通过后，先在沙箱内对 `127.0.0.1:80` 发一次本地对话。golden 没有出网权限，所以模型调用会很快失败，但调用前的初始化已经完成。之后才打开 8079 端口，wakeupProbe 看的就是这个端口。**效果：新用户首轮从约 49s 降到约 12s。**
+- **B. 精简插件**（`build/actor/openclaw.json`）：OpenClaw 2026.11 默认启用 41 个插件，运行时实际加载 14 个（浏览器、canvas、computer-use、TTS、多个模型提供商等）。设置 `plugins.allow: ["google", "memory-core", "web-readability"]` 后，运行时只加载 1 个。**效果：快照小约 6%（338.9 → 319.5 MB），挂起从 17.9s 降到 15.9s。**
+
+> [!NOTE]
+> 剩下约 320 MB 是 OpenClaw 2026.11 运行时本身的开销。如果要把从 GCS 下载的唤醒压到 3 秒左右（WhatsApp demo 的水平），需要换用更轻的 OpenClaw 版本（例如 2026.8.x）。在当前版本下，提高节点本地快照的命中率（更大的节点、减少节点抖动）比换机型更有效。
 
 ---
 
 ## 15. 性能参考数据
 
-POC 实测数据（gVisor，n2d-standard-4 Worker 节点，Gemini Flash 模型）：
+POC 实测数据（gVisor，Gemini Flash 模型；Worker 节点起初为 n2d-standard-4，后改为 n2d-standard-8，两者下载速度基本一致）：
 
 | 场景 | 端到端耗时 | 说明 |
 |---|---|---|
 | golden 模板首次生成 | ~240s | 只发生一次 |
-| 新用户首次对话（热节点） | ~50s | 创建 actor + 出网策略 + 从 golden 恢复 + 首次模型调用 |
+| 新用户首次对话（未预热 golden） | ~49s | 从 golden 恢复约 6.7s + OpenClaw 首轮懒加载约 40s |
+| 新用户首次对话（预热 golden，节点已缓存） | **~12s** | 从 golden 恢复约 1.4s + 首轮对话 |
+| 新用户首次对话（预热 golden，节点未缓存） | ~21s | 先从 GCS 下载 golden（约 12s） |
 | 老用户唤醒（热节点） | **5–6s**（其中恢复 1.4–7s） | 下载快照约 1–2s，恢复约 2s |
 | 老用户唤醒（未预热的新节点） | ~60s | download ~10s + **oci_unpack ~45s** + restore ~2s |
 | 沙箱挂起（同步，快照写入 GCS） | ~15s | 用户空闲后在后台执行，用户无感知 |

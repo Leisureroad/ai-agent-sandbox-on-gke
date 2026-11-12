@@ -28,7 +28,7 @@ export FEISHU_DOMAIN="${FEISHU_DOMAIN:-feishu}"
 # snapshotted with the actor). Template names differ because templates are immutable.
 export STORAGE="${STORAGE:-filestore}"
 if [ "$STORAGE" = filestore ]; then
-  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent}"
+  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm-fs}"
   export WORKSPACE_VOLUME='# Per-actor Filestore VolumePool share: provisioned on first resume,
 # attached/mounted on every resume, unmounted/detached on every suspend.
 - name: workspace
@@ -37,7 +37,7 @@ if [ "$STORAGE" = filestore ]; then
       capacityBytes: 2147483648
       storageClassName: substrate-volumepool-sc'
 else
-  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-local}"
+  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm}"
   export WORKSPACE_VOLUME='# Fallback: Substrate durable dir, captured in every snapshot.
 - name: workspace
   durableDir: {}'

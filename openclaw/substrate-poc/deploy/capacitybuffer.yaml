@@ -1,7 +1,7 @@
 # GKE standby capacity buffer for the OpenClaw worker node pool.
 #
 # One chunk = one worker pod's shape (500m CPU / 3.5Gi, gVisor taint, worker
-# node pool). Three chunks fill one n2d-standard-4 worker node, so GKE keeps one
+# node pool). Seven chunks fill one n2d-standard-8 worker node, so GKE keeps one
 # extra worker node pre-initialized (images pre-pulled, DaemonSets started) and
 # then SUSPENDED: no compute cost while idle, resumed in seconds when the
 # WorkerPool autoscaler adds a fourth worker and the pending pod needs a node.
@@ -39,4 +39,4 @@ spec:
   provisioningStrategy: buffer.gke.io/standby-capacity
   podTemplateRef:
     name: openclaw-worker-shape
-  replicas: 3
+  replicas: 7
