@@ -315,35 +315,39 @@ kubectl -n ate-system rollout status deploy/atenet-router
 
 `deploy.sh` 通过 `STORAGE` 变量二选一：
 
-| 选项 | 工作区存在哪里 | 优点 | 适用 |
-|---|---|---|---|
-| `STORAGE=filestore` | 每个智能体一块 Filestore VolumePool 卷（2 GiB），恢复时挂载、挂起时卸载 | 工作区独立于快照，可共享和备份，容量大 | 生产推荐 |
-| `STORAGE=local` | Substrate `durableDir`，随沙箱快照一起存到 GCS | 零依赖、最稳定 | POC / Filestore 不可用时 |
+| 选项 | 存储布局 | 适用 |
+|---|---|---|
+| `STORAGE=filestore`（推荐） | OpenClaw 工作目录 `~/.openclaw/workspace` 用 Substrate `durableDir`（随快照保存）；**用户文件**放在每个用户独享的 Filestore VolumePool 卷（2 GiB），挂载在 `/home/node/files`，在工作区里以 `files/` 软链接出现 | 生产推荐：用户文件独立于快照长期保存 |
+| `STORAGE=local` | 工作目录和文件都在 `durableDir`，随快照存到 GCS | 零依赖；Filestore 不可用时 |
 
-### 7.1 Filestore VolumePool（可选）
+> [!IMPORTANT]
+> **为什么工作目录不直接放 Filestore**：OpenClaw 2026.11 用硬链接原子写入工作区的引导文件和状态文件，而 Filestore NFS 卷经 gVisor（9p）挂进沙箱后不支持硬链接，会报 `Workspace filesystem does not support atomic bootstrap publication`，对话回复为空。因此只把**用户文件**放 Filestore。（2026.8.2 没有这个要求，但为了两个版本行为一致，仍采用同一布局。）
+
+### 7.1 创建 VolumePool 并安装 Filestore CSI
 
 ```bash
+# 1) 新建 VolumePool（与 GKE 同 VPC、同区域；v1beta1 预览 API）
+TOKEN=$(gcloud auth print-access-token)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  "https://file.googleapis.com/v1beta1/projects/$PROJECT_ID/locations/$VOLUMEPOOL_LOCATION/volumePools?volumePoolId=$VOLUMEPOOL_NAME" \
+  -d "{\"network\": \"projects/$PROJECT_ID/global/networks/$NETWORK\", \"defaultVolumeQuotaMib\": 2048}"
+gcloud filestore instances list --location $VOLUMEPOOL_LOCATION   # 等底层实例变为 READY（约 10 分钟）
+
+# 2) 安装 Filestore CSI（Substrate overlay）并创建 StorageClass
 cd $WORK/gcp-filestore-csi-driver/deploy/kubernetes/overlays/substrate
-./deploy.sh --project-id $PROJECT_ID \
-  --volumepool-location $VOLUMEPOOL_LOCATION \
-  --volumepool-name $VOLUMEPOOL_NAME \
-  --storageclass-name substrate-volumepool-sc
+./deploy.sh --project-id $PROJECT_ID --volumepool-location $VOLUMEPOOL_LOCATION \
+  --volumepool-name $VOLUMEPOOL_NAME --storageclass-name substrate-volumepool-sc
 
-# 确认 CSI 的 GSA 有 Filestore 编辑权限
-G=substrate-filestore-csi@${PROJECT_ID}.iam.gserviceaccount.com
-gcloud projects add-iam-policy-binding $PROJECT_ID --member=serviceAccount:$G \
-  --role=roles/file.editor --condition=None
-kubectl -n gcp-filestore-csi-driver get pods
-```
+# 3) 让 CSI node 组件也跑在带 compute-class taint 的 Worker 节点上（否则沙箱挂不上卷）
+kubectl -n gcp-filestore-csi-driver patch ds gcp-filestore-csi-node --type=merge \
+  -p '{"spec":{"template":{"spec":{"tolerations":[{"operator":"Exists"}]}}}}'
 
-部署前先确认 VolumePool 的底层实例状态是 `READY`：
-
-```bash
-gcloud filestore instances list --location $VOLUMEPOOL_LOCATION
+# 4) CSI 控制器证书安全网：每 12 小时重启一次控制器，避免证书过期导致建卷失败
+kubectl apply -f $WORK/openclaw-demo/deploy/filestore-csi-cert-refresh.yaml
 ```
 
 > [!CAUTION]
-> POC 中遇到过 VolumePool 底层实例处于 `REPAIRING` 状态：卷能创建，但 NFS 挂载报 `Connection refused`，智能体无法唤醒。遇到这种情况先用 `STORAGE=local` 继续，待实例恢复后再切换（见 16 节）。
+> POC 中遇到的 Filestore 问题：① 旧 VolumePool 唯一的底层实例长期 `REPAIRING`，且已达 100 个 share 上限，只能新建池；② CSI 控制器的 24 小时证书过期后没有自动轮换，建卷报 `x509: certificate has expired`（重启控制器即可，CronJob 自动处理）；③ Substrate v1.0 的外部卷是预览功能，所有 `kubectl ate` 调用需要带 `--preview`（代码包已内置）；④ 新卷根目录为 `root:root 0755`，沙箱内无法 chown，所以 Filestore 版 actor 镜像（`:demo-fs`）以 root 运行。
 
 ---
 
@@ -376,22 +380,26 @@ kubectl -n openclaw create secret generic openclaw-feishu \
 
 ## 9. 第六步：构建镜像
 
-所有镜像都用 Cloud Build 构建并推送到 Artifact Registry：
+所有镜像都用 Cloud Build 构建。OpenClaw 版本通过 `_OPENCLAW_IMAGE`（按 digest 固定）选择，**网关和 actor 必须用同一个**；推荐 **2026.8.2**（快照约 70 MB，见 14.4）。
 
 ```bash
 cd $WORK/openclaw-demo
-SUBS="_REGION=${GCE_REGION},_AR_REPO=${ARTIFACT_REGISTRY_REPOSITORY}"
-gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --substitutions=$SUBS --config build/cloudbuild-demo.yaml .        # gateway + actor
-gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --substitutions=$SUBS --config build/cloudbuild-dashboard2.yaml .  # 控制台
+V8=ghcr.io/openclaw/openclaw@sha256:5d25165995041caa6a7175bec82b25ad98c44eb269bb42435da8e27ec06e6be4   # 2026.8.2-slim
+SUBS="_REGION=${GCE_REGION},_AR_REPO=${ARTIFACT_REGISTRY_REPOSITORY},_OPENCLAW_IMAGE=$V8"
+B="gcloud builds submit --project $PROJECT_ID --region $GCE_REGION"
+$B --substitutions=$SUBS,_TAG=demo-v8 --config build/cloudbuild-gateway.yaml .                      # 网关
+$B --substitutions=$SUBS,_TAG=demo-fs-v8,_RUN_AS_UID=0 --config build/cloudbuild-actor.yaml .         # actor（Filestore 版，root）
+$B --substitutions=$SUBS,_TAG=demo-v8,_RUN_AS_UID=1000 --config build/cloudbuild-actor.yaml .         # actor（本地存储版，churn 用）
+$B --substitutions=_REGION=${GCE_REGION},_AR_REPO=${ARTIFACT_REGISTRY_REPOSITORY} --config build/cloudbuild-dashboard2.yaml .   # 控制台
 ```
 
 | 镜像 | 内容 | 关键点 |
 |---|---|---|
-| `openclaw-actor:demo` | OpenClaw 官方 slim 镜像 + 人设文件 + `entrypoint.sh` | **以 uid 1000 运行**（见 14 节 #3）；首次启动时把人设拷入工作区 |
-| `openclaw-gateway:demo` | OpenClaw 官方 slim 镜像 + 编译后的 `substrate` 插件 + `kubectl-ate v1.0.0` | 插件需要 esbuild 预编译成 JS；gateway 与 actor **使用同一个 digest** |
-| `openclaw-dashboard:demo` | Node.js 控制台 + 扩缩容控制器 | 见 11.4 |
+| `openclaw-actor:demo-fs-v8` / `:demo-v8` | OpenClaw slim + 人设文件 + 预热 entrypoint + 就绪探针 `wakeup.mjs` | `RUN_AS_UID`：本地存储版 1000，Filestore 版 0；精简插件 `plugins.allow` |
+| `openclaw-gateway:demo-v8` | OpenClaw slim + 编译后的 `substrate` 插件 + `kubectl-ate v1.0.0` | 飞书插件版本自动与 OpenClaw 版本一致 |
+| `openclaw-dashboard:demo` | 控制台 + 扩缩容控制器 + churn + 生命周期视图 | 见 11.4、13 |
 
-后续只改了网关插件时，单独构建网关即可：`--config build/cloudbuild-gateway.yaml`。
+不带 `OPENCLAW_VERSION` 时使用 2026.11.2 的默认 tag（`demo`、`demo-fs`）。
 
 ---
 
@@ -403,11 +411,16 @@ gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --substitutions=
 cd $WORK/openclaw-demo/deploy
 source ../../substrate-gke/.ate-dev-env.sh
 # 前提：已按 11.2 开启集群节点自动配置（NAP），ComputeClass 和 CapacityBuffer 依赖它
-FEISHU_PEERS=$(paste -sd, ../../secrets/feishu-peers.txt) \
-FEISHU_ENABLED=true \
-STORAGE=local \
+OPENCLAW_VERSION=2026.8.2 \
+STORAGE=filestore VOLUMEPOOL_STORAGECLASS=substrate-volumepool-sc \
+FEISHU_PEERS=$(paste -sd, ../../secrets/feishu-peers.txt) FEISHU_ENABLED=true \
 ./deploy.sh
+
+# churn 压测用的本地存储模板（只建模板，不动网关）
+TEMPLATE_ONLY=true OPENCLAW_VERSION=2026.8.2 STORAGE=local ./deploy.sh
 ```
+
+非默认的 OpenClaw 版本会自动使用独立的镜像 tag、模板名和网关状态 PVC（后缀 `-v8`），回滚只需去掉 `OPENCLAW_VERSION` 再执行一次。
 
 `deploy.sh` 是幂等的，依次完成：
 
@@ -415,8 +428,8 @@ STORAGE=local \
 1. 创建命名空间 `openclaw-workers`，部署 **WorkerPool** `openclaw`（默认 3 个 Worker，每个 request 500m/3.5Gi，limit 4CPU/4Gi）
 2. 创建命名空间 `openclaw`（打上 `ate.dev/api-access=true` 标签）和密钥
 3. 创建 **atespace** `openclaw-demo`，并通过 access policy 把 `editor` 角色授予网关和控制台的 SA
-4. 创建 golden **ActorTemplate**（`openclaw-agent-warm`，Filestore 模式为 `openclaw-agent-warm-fs`）：
-   - `wakeupProbe: GET :8079/, timeout 900s`：actor 镜像的 entrypoint 在 OpenClaw `/readyz` 通过后，先在沙箱内跑一次本地预热对话，再打开 8079 端口。golden 因此包含**完整初始化后的 agent 运行时**，新用户首轮不用再等约 40 秒的懒加载（详见 14.3）
+4. 创建 golden **ActorTemplate**（`openclaw-agent-warm-fs5-v8`，本地存储模式为 `openclaw-agent-warm-v8`）：
+   - `wakeupProbe: GET :8079/, timeout 900s`：actor 镜像的 entrypoint 在 OpenClaw `/readyz` 通过后，先在沙箱内跑一次本地预热对话，再启动 `wakeup.mjs` 打开 8079 端口；`wakeup.mjs` 在每次唤醒时补齐引导文件并创建 `files/` 软链接，且始终返回就绪。golden 因此包含**完整初始化后的 agent 运行时**，新用户首轮不用再等约 40 秒的懒加载（详见 14.3）
    - `preferredFidelity: SNAPSHOT_FIDELITY_MEMORY`：连同进程内存一起快照，唤醒后直接接着对话
    - 资源：1 vCPU / 2.5 GiB
 5. 部署 **Gateway**（OpenClaw + substrate 插件 + Envoy mTLS sidecar）和 **Dashboard**（含 LoadBalancer）
@@ -428,7 +441,7 @@ kubectl ate get actor-templates -a openclaw-demo
 ```
 
 > [!NOTE]
-> 首次创建模板时，Substrate 会冷启动一个 OpenClaw 来生成 golden 快照，在 gVisor 中约需 **4 分钟**。之后所有新用户都从这个快照派生，不再冷启动。
+> 首次创建模板时，Substrate 会冷启动一个 OpenClaw 来生成 golden 快照：2026.8.2 本地存储约 **1.5 分钟**、Filestore 约 **3 分钟**；2026.11 约 3–5 分钟。之后所有新用户都从这个快照派生，不再冷启动。
 
 ### 10.2 网关关键配置（`gateway.yaml.tmpl`，已内置）
 
@@ -609,6 +622,12 @@ curl -s http://$IP/api/state | jq '.autoscaler | {active, waiting, desired, repl
 > [!WARNING]
 > “删除”会同时删掉该用户的快照和工作区，用户再发消息时会作为新用户重新开始。只想释放资源时请用“挂起”。
 
+### 控制台新增功能
+
+- **实例表**：分页（每页 5 个，RUNNING 排前）；点击实例名，右侧展开该 Actor 的**生命周期面板**，再次点击或点 ✕ 关闭；名字旁的 ↗ 打开全屏页 `/lifecycle?actor=<name>`。
+- **生命周期**：按 Actor 展示每次 唤醒 → 对话 → 空闲 → 挂起，耗时分解（调度/路由、下载快照、解压镜像、恢复进程、对话、空闲、Checkpoint、上传快照）来自 atelet 的 `Restore / Checkpoint timing breakdown` 日志（控制台需要读取 `ate-system` Pod 日志的只读权限，已内置）。
+- **⚡ Churn 10 / 20**：合成 Actor 在 Worker 池上循环 唤醒→占用 1.5s→挂起；排队的 Actor 计入扩容需求（会触发 Worker 扩容和 standby 节点恢复）；结束后自动删除 churn Actor；使用 `CHURN_TEMPLATE`（本地存储模板），不创建 Filestore 卷。
+
 ### 界面二：终端用户对话视图 `http://<EXTERNAL-IP>/chat`
 
 - 以飞书风格展示每个用户的对话，包含真实飞书用户和网页模拟用户
@@ -657,6 +676,10 @@ curl -s http://$IP/api/state | jq '.autoscaler | {active, waiting, desired, repl
 | 22 | **预热 golden**（entrypoint 本地预热 + wakeupProbe 8079） | 新用户首轮从约 49s 降到约 12s（见 14.3） |
 | 23 | **精简 actor 插件**（`plugins.allow`） | 运行时加载的插件从 14 个降到 1 个，快照小约 6%（见 14.3） |
 | 24 | **控制台**：实例分页（每页 5 个，RUNNING 排前）、实时请求路径图 | 实例多时也方便定位活跃用户 |
+| 25 | **OpenClaw 2026.8.2**（`OPENCLAW_VERSION`） | 快照 339 → 69 MB；下载唤醒 15.4 → 7.2s；checkpoint 7.3 → 0.3s（见 14.4） |
+| 26 | **Filestore 只存用户文件**（`files/` → `/home/node/files`） | 绕开 OpenClaw 2026.11 的硬链接要求；用户文件独立于快照持久化 |
+| 27 | **Churn 压测**（触发扩容，结束自动删除） | 直观展示多路复用、背压和弹性扩容 |
+| 28 | **按 Actor 的生命周期视图**（atelet 耗时分解） | 定位每次唤醒/挂起的瓶颈 |
 
 ### 14.3 唤醒时延分析（与上游 WhatsApp demo 对比）
 
@@ -681,6 +704,21 @@ POC 中发现，上游 WhatsApp demo（Substrate release-0.1 + OpenClaw 2026.8.2
 
 > [!NOTE]
 > 剩下约 320 MB 是 OpenClaw 2026.11 运行时本身的开销。如果要把从 GCS 下载的唤醒压到 3 秒左右（WhatsApp demo 的水平），需要换用更轻的 OpenClaw 版本（例如 2026.8.x）。在当前版本下，提高节点本地快照的命中率（更大的节点、减少节点抖动）比换机型更有效。
+
+### 14.4 切换到 OpenClaw 2026.8.2
+
+快照大小是 GCS 下载类唤醒的瓶颈（14.3），而 OpenClaw 2026.11 运行时本身约 320–340 MB。切换到上游 WhatsApp demo 使用的 2026.8.2 后（同一集群、同一模板配置）：
+
+| 指标 | 2026.11.2 | 2026.8.2 |
+|---|---|---|
+| 内存快照 `pages.img.zstd` | ~339 MB | **69.4 MB** |
+| 从 GCS 下载唤醒（含 Filestore 挂载 3.1s） | 15.4s（下载 12.9s） | **7.2s**（下载 3.6s） |
+| 节点本地唤醒 | 2.0s（+ 挂载 3.1s） | **0.3s**（+ 挂载 3.1s） |
+| Checkpoint + 上传 | 7.3s + 2.6s | **0.3s + 1.2s** |
+| golden 生成 | 3–5 分钟 | 1.5–3 分钟 |
+| Churn 10 / 90s（Worker 3→9） | 14 个周期，checkpoint 平均 36.8s | **46 个周期**，checkpoint 平均 13.1s，0 错误 |
+
+2026.8.2 不需要硬链接（没有 atomic bootstrap publication），所需的插件钩子（`reply_dispatch`、`registerAcpRuntimeBackend`）都已具备。切换后剩下的主要开销是 Filestore 卷的挂载/卸载（各约 3.1s）。
 
 ---
 
@@ -712,6 +750,10 @@ POC 实测数据（gVisor，Gemini Flash 模型；Worker 节点起初为 n2d-sta
 |---|---|---|
 | 飞书 @机器人 没反应 | `kubectl -n openclaw logs deploy/openclaw-gateway -c gateway \| grep feishu` | 没有任何 received 日志：检查权限、事件订阅（长连接 + `im.message.receive_v1`）和版本是否已发布；日志里有 `groupPolicy=disabled`：检查群聊配置 |
 | 回复 “Couldn't sign in to the AI service” | 网关日志中查看 `dispatching to agent` 的 session | 应该是 `acp:...` 形式。如果不是，确认插件版本包含自动路由兜底 |
+| 新用户回复为空，actor 日志有 `atomic bootstrap publication` | OpenClaw 2026.11 的工作区放在了 Filestore 上 | 使用代码包的 Filestore 布局（工作区本地、用户文件在 `files/`），或改用 2026.8.2 |
+| 创建 actor 报 `require the ExternalVolumes preview gate ... --preview` | 调用 kubectl-ate 没带 `--preview` | 代码包已内置；手动操作时用 `kubectl ate --preview ...` |
+| golden 一直生成不出来，ate-controller 报 `CSI CreateVolume failed ... certificate has expired` | Filestore CSI 控制器证书过期 | `kubectl -n gcp-filestore-csi-driver rollout restart deploy/gcp-filestore-csi-controller`；并应用 `filestore-csi-cert-refresh.yaml` |
+| agent 说 `files/` 没有写权限 | Filestore 卷根目录属于 root，actor 以 uid 1000 运行 | Filestore 模式使用 `:demo-fs` 镜像（`RUN_AS_UID=0`），`deploy.sh` 自动选择 |
 | 回复 “The AI service is temporarily overloaded” | `kubectl ate get actors -a openclaw-demo` 查看是否为 `CRASHED` | actor 崩溃了。新版网关会自动 revert；也可以手动执行 `kubectl ate revert actor <name> -a openclaw-demo` |
 | 回复 “⚠️ This model was not found” | `kubectl ate get actors -a openclaw-demo` | actor 被删除了。确认网关已更新到包含 404 自愈的版本，用户再发一次即可 |
 | 504 / 等很久没回复 | `kubectl -n ate-system logs deploy/atenet-router` | 确认 `--parked-request-budget=180s`；查看是否有 Worker 空闲（`kubectl ate get workers`） |
@@ -780,10 +822,10 @@ openclaw-demo/
 │   ├── idle-suspender.ts       #   空闲检测与挂起
 │   └── observer.ts             #   对话与耗时观测，供控制台读取
 ├── build/
-│   ├── actor.Dockerfile, actor/   # 智能体镜像与人设
+│   ├── actor.Dockerfile, actor/   # 智能体镜像：人设、entrypoint（预热）、wakeup.mjs（就绪探针 + 引导文件 + files/ 软链接）
 │   ├── gateway.Dockerfile         # 网关镜像
 │   └── cloudbuild-*.yaml
-├── dashboard2/                 # 控制台、对话视图、扩缩容控制器
+├── dashboard2/                 # 控制台（console.html）、生命周期页（lifecycle.html）、对话视图、扩缩容控制器、churn
 └── deploy/
     ├── deploy.sh               # 一键部署
     ├── workerpool.yaml.tmpl, actortemplate.yaml.tmpl, gateway.yaml.tmpl, dashboard.yaml.tmpl

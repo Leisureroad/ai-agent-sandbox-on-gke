@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Actor 生命周期 · OpenClaw on Agent Substrate</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* Palette and layout follow the always-on-agent demo dashboard (GitHub dark). */
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#010409;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;
+--green:#3fb950;--green-bg:rgba(63,185,80,.1);--red:#f85149;--cyan:#79c0ff;--yellow:#e3b341;--orange:#d29922;--pink:#f778ba;--purple:#bc8cff;--blue:#58a6ff}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;background:var(--bg);color:var(--text);line-height:1.5;font-size:13px;
+  font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,"PingFang SC","Noto Sans SC",monospace;max-width:100vw;overflow-x:hidden}
+header{border-bottom:2px solid var(--green);padding-bottom:12px;margin-bottom:20px;display:flex;align-items:center;gap:16px}
+header h1{font-size:16px;margin:0;color:var(--green);font-weight:800;letter-spacing:.5px}
+header .sub{color:var(--muted);font-size:11px;margin-top:2px}
+header .right{margin-left:auto;display:flex;align-items:center;gap:14px}
+header .sync{font-size:11px;color:var(--muted)}
+header a{color:var(--cyan);text-decoration:none;border:1px solid var(--line);padding:5px 12px;border-radius:5px;font-size:12px;background:var(--panel)}
+header a:hover{border-color:var(--cyan)}
+main{display:grid;gap:16px}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 10px;text-align:center}
+.kpi .v{font-size:26px;font-weight:800;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+.kpi .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px}
+.kpis .kpi:nth-child(1) .v{color:var(--cyan)}.kpis .kpi:nth-child(2) .v{color:var(--green)}
+.kpis .kpi:nth-child(3) .v{color:var(--muted)}.kpis .kpi:nth-child(4){border-color:var(--pink)}.kpis .kpi:nth-child(4) .v{color:var(--pink)}
+.kpis .kpi:nth-child(5) .v{color:var(--yellow)}.kpis .kpi:nth-child(6) .v{color:var(--accent)}
+.grid2{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;min-width:0}
+.card h2{font-size:10px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;
+  border-left:3px solid var(--green);padding-left:8px;display:flex;align-items:center;gap:8px;font-weight:700}
+.card h2 .hint{color:var(--muted);font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;font-style:italic}
+.card.c-fleet h2{border-left-color:var(--green)}.card.c-tl h2{border-left-color:var(--cyan)}
+.card.c-as h2{border-left-color:var(--yellow)}.card.c-wp h2{border-left-color:var(--pink)}.card.c-flow h2{border-left-color:var(--cyan)}
+.card.c-log h2{border-left-color:var(--purple)}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px dashed var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--line)}
+tbody tr:hover{background:rgba(88,166,255,.04)}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;border:1px solid var(--line)}
+.RUNNING{background:var(--green-bg);color:var(--green);border-color:var(--green);animation:pulse 2s infinite}
+.RESUMING{background:rgba(121,192,255,.1);color:var(--cyan);border-color:var(--cyan);animation:pulse 1s infinite}
+.SUSPENDING{background:rgba(227,179,65,.1);color:var(--yellow);border-color:var(--yellow)}
+.SUSPENDED{background:rgba(139,148,158,.1);color:var(--muted);border-color:var(--muted)}
+.CRASHED,.DELETING{background:rgba(248,81,73,.1);color:var(--red);border-color:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.small{font-size:11px;color:var(--muted)}.mono{font-size:12px}
+button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:4px 9px;cursor:pointer;font-size:11px;font-family:inherit}
+button:hover{border-color:var(--cyan);color:var(--cyan)}button.warn:hover{border-color:var(--red);color:var(--red)}
+button.primary{background:var(--yellow);color:#0d1117;border:none;font-weight:800;padding:5px 12px}button.primary:hover{opacity:.85;color:#0d1117}
+.workers{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.worker{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:10px 12px;transition:all .3s}
+.worker.busy{border-color:var(--green);box-shadow:0 0 12px rgba(63,185,80,.15)}
+.tl{max-height:430px;overflow:auto}
+.tl .row{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px dashed var(--line);font-size:11px}
+.tl .t{color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+.tl .k{flex:none;display:inline-block;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:800;text-transform:uppercase;border:1px solid;color:var(--muted)}
+.k.resume,.k.scale-down,.k.warmup-start,.k.warmup-retry{color:var(--cyan)}.k.active,.k.scale-up,.k.warmup-done{color:var(--green)}
+.k.suspend,.k.suspending{color:var(--yellow)}.k.crash,.k.warmup-failed{color:var(--red)}.k.create,.k.manual{color:var(--purple)}
+.tl .d{color:var(--muted);min-width:0}.tl .d .mono{color:var(--text)}
+.vol-on{color:var(--green)}.vol-off{color:var(--muted)}
+.bar{height:4px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:4px}.bar>i{display:block;height:100%;background:var(--yellow)}
+pre.logs{background:var(--panel2);border:1px solid #000;border-radius:4px;padding:12px;max-height:340px;overflow:auto;white-space:pre-wrap;font-size:11px}
+.err{color:var(--red);font-size:11px}
+td.ops{white-space:nowrap}.kpi .l.cond{text-transform:none;letter-spacing:0;font-size:10px;line-height:1.4}
+#autoscale .kpi:nth-child(4){border-color:var(--line)}#autoscale .kpi:nth-child(4) .v{color:var(--cyan)}
+.flow{display:flex;align-items:center;gap:14px;justify-content:center;padding:6px 0;flex-wrap:wrap}
+.flow-node{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:9px 16px;text-align:center;font-size:11px;min-width:120px;transition:opacity .4s,filter .4s}
+.flow-node b{font-size:12px}.flow-node span{color:var(--muted)}
+.flow-node.gw{border-color:var(--green)}.flow-node.gw span{color:var(--green)}
+.flow-node.ate{border-color:var(--cyan)}.flow-node.actor{border-color:var(--pink)}.flow-node.store{border-color:var(--yellow)}
+.flow-arrow{color:var(--muted);font-size:18px;transition:opacity .4s}
+.flow-node.dim{opacity:.3;filter:grayscale(1)}.flow-arrow.dim{opacity:.2}.flow-node.active{animation:pulse 1.2s infinite}
+.grid1{display:grid;grid-template-columns:1fr;gap:16px}
+.lc{display:grid;grid-template-columns:260px 1fr;gap:14px;min-height:300px}
+.lc-list{border-right:1px solid var(--line);padding-right:10px;max-height:calc(100vh - 170px);overflow:auto}
+.lc-item{padding:7px 9px;border:1px solid transparent;border-radius:4px;cursor:pointer;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.lc-item:hover{border-color:var(--line);background:var(--panel2)}.lc-item.on{border-color:var(--cyan);background:var(--panel2)}
+.lc-item .nm{font-size:12px}.lc-item .who{font-size:10px;color:var(--muted)}
+.lc-main{max-height:calc(100vh - 170px);overflow:auto;min-width:0}
+.cyc{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:10px 12px;margin-bottom:8px}
+.cyc.live{border-color:var(--green);box-shadow:0 0 10px rgba(63,185,80,.12)}
+.cyc-hd{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.cyc-hd b{color:var(--text);font-size:12px}
+.gantt{display:flex;height:22px;border-radius:3px;overflow:hidden;margin:8px 0 6px;background:var(--line)}
+.gantt i{display:block;height:100%;min-width:3px;position:relative;font-style:normal;font-size:10px;line-height:22px;color:#0d1117;text-align:center;overflow:hidden;white-space:nowrap;border-right:1px solid rgba(0,0,0,.35)}
+.seg-sched{background:#6e7681}.seg-download{background:#58a6ff}.seg-unpack{background:#bc8cff}.seg-restore{background:#79c0ff}.seg-other{background:#484f58}
+.seg-turn{background:#3fb950}.seg-idle{background:#30363d;color:var(--muted)!important}.seg-ckpt{background:#e3b341}.seg-persist{background:#d29922}.seg-crash{background:#f85149}
+.cyc-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--muted)}
+.cyc-legend span::before{content:"";display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px;background:var(--c)}
+.cyc-legend b{color:var(--text);font-weight:600}
+.lc-sum{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.lc-sum>div{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:8px;text-align:center}
+.lc-sum .v{font-size:18px;font-weight:800;color:var(--cyan)}.lc-sum .l{font-size:10px;color:var(--muted)}
+.lc-raw{margin-top:10px}.lc-raw summary{cursor:pointer;font-size:11px;color:var(--muted)}
+.pager{display:flex;gap:6px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:11px;color:var(--muted)}
+.pager button.on{border-color:var(--green);color:var(--green)}.pager button:disabled{opacity:.35;cursor:default;border-color:var(--line);color:var(--text)}
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🦞 Actor 生命周期</h1>
+    <div class="sub">按 Actor 查看每次 唤醒 → 对话 → 空闲 → 挂起 的各组件耗时 · 耗时分解来自 atelet 日志（Restore / Checkpoint timing breakdown）</div>
+  </div>
+  <div class="right"><span class="sync" id="sync">连接中…</span><a href="/" >← 返回管理控制台</a></div>
+</header>
+<main>
+  <section class="card c-tl">
+    <h2>Actor 生命周期 <span class="hint">左侧选择 Actor；最新一次在最上面；进行中的一次实时增长</span></h2>
+    <div class="lc">
+      <div class="lc-list" id="lc-list"></div>
+      <div class="lc-main" id="lc-main"></div>
+    </div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const clock=t=>new Date(t).toLocaleTimeString("zh-CN",{hour12:false});
+const STATE_ORDER={RUNNING:0,RESUMING:1,SUSPENDING:2,CRASHED:3,DELETING:4,SUSPENDED:5};
+function convFor(d,name){return (d.observer?.conversations||[]).find(c=>c.actor===name)}
+let last=null;
+// ---------- Per-actor lifecycle (cycles + component timings) ----------
+let lcSel=new URLSearchParams(location.search).get("actor");let lcRawOpen=false;
+function selActor(n){lcSel=n;lcRawOpen=false;history.replaceState(null,"","?actor="+encodeURIComponent(n));if(last)render(last);}
+const fmtS=ms=>ms==null||isNaN(ms)?"–":(ms>=10000?(ms/1000).toFixed(0):(ms/1000).toFixed(1))+"s";
+const PH={sched:["调度/路由","#6e7681"],download:["下载快照","#58a6ff"],unpack:["解压镜像","#bc8cff"],restore:["恢复进程","#79c0ff"],other:["挂载/元数据","#484f58"],
+  turn:["对话","#3fb950"],idle:["空闲","#30363d"],ckpt:["Checkpoint","#e3b341"],persist:["上传快照","#d29922"],crash:["崩溃","#f85149"]};
+function buildCycles(d,name){
+  const ev=(d.timeline||[]).filter(e=>e.actor===name).slice().sort((a,b)=>a.at-b.at);
+  const tim=(d.timings||{})[name]||[];
+  const conv=convFor(d,name);const msgs=(conv?.messages)||[];
+  const cyc=[];let cur=null;
+  for(const e of ev){
+    if(e.kind==="resume"){cur={resumeAt:e.at};cyc.push(cur);}
+    else if(e.kind==="active"){if(!cur||cur.activeAt){cur={};cyc.push(cur);}cur.activeAt=e.at;cur.where=e.detail;}
+    else if(e.kind==="suspending"){if(cur)cur.suspendingAt=e.at;}
+    else if(e.kind==="suspend"){if(cur){cur.suspendAt=e.at;cur.snap=e.detail;cur=null;}}
+    else if(e.kind==="crash"){if(cur){cur.crashAt=e.at;cur.crash=e.detail;cur=null;}}
+  }
+  for(const c of cyc){
+    const a=c.activeAt||c.resumeAt||0;
+    c.restore=tim.filter(t=>t.op==="restore"&&Math.abs(t.at-a)<20000).pop();
+    if(c.suspendingAt||c.suspendAt){const z=c.suspendAt||c.suspendingAt;c.ckpt=tim.filter(t=>t.op==="checkpoint"&&t.at>=(c.suspendingAt||z)-5000&&t.at<=z+20000).pop();}
+    const from=(c.resumeAt||c.activeAt||0)-8000,to=c.suspendingAt||c.crashAt||d.now;
+    c.turns=[];
+    for(let i=0;i<msgs.length;i++){const m=msgs[i];if(m.role!=="user"||m.at<from||m.at>to)continue;const r=msgs.slice(i+1).find(x=>x.role==="assistant");c.turns.push({at:m.at,end:r?.at,lat:r?.latencyMs,fb:r?.firstByteMs,status:r?.status});}
+  }
+  return cyc;
+}
+function cycleSegs(c,d){
+  const segs=[];const R=c.restore?.phases||{};
+  const resumeMs=(c.resumeAt&&c.activeAt)?c.activeAt-c.resumeAt:null;
+  if(c.restore){
+    const tot=c.restore.total*1000;const dl=(R.download||0)*1000,un=(R.oci_unpack||0)*1000,wr=(R.worker_restore||0)*1000;
+    const other=Math.max(0,tot-dl-un-wr);
+    if(resumeMs!=null&&resumeMs>tot)segs.push(["sched",resumeMs-tot]);
+    if(dl>50)segs.push(["download",dl]);if(un>50)segs.push(["unpack",un]);if(other>50)segs.push(["other",other]);segs.push(["restore",wr]);
+  }else if(resumeMs!=null)segs.push(["sched",resumeMs]);
+  const ta=c.activeAt||c.resumeAt;
+  const lastEnd=Math.max(0,...c.turns.map(t=>t.end||0));
+  if(ta&&lastEnd>ta)segs.push(["turn",lastEnd-ta]);
+  const idleEnd=c.suspendingAt||c.crashAt||(c.suspendAt?null:d.now);
+  if(idleEnd&&(lastEnd||ta)&&idleEnd>(lastEnd||ta))segs.push(["idle",idleEnd-(lastEnd||ta)]);
+  if(c.ckpt){const P=c.ckpt.phases;segs.push(["ckpt",(P.worker_checkpoint||0)*1000]);if(P.persist)segs.push(["persist",P.persist*1000]);}
+  else if(c.suspendingAt&&c.suspendAt)segs.push(["ckpt",c.suspendAt-c.suspendingAt]);
+  if(c.crashAt)segs.push(["crash",1500]);
+  return segs.filter(s=>s[1]>0);
+}
+function renderLifecycle(d){
+  const A=(d.actors||[]).filter(a=>!a.name.startsWith("warmup-"));
+  const lastAt=n=>Math.max(0,...(d.timeline||[]).filter(e=>e.actor===n).map(e=>e.at));
+  const items=[...A].sort((x,y)=>((STATE_ORDER[x.status]??9)-(STATE_ORDER[y.status]??9))||(lastAt(y.name)-lastAt(x.name)));
+  if(!lcSel||!items.find(a=>a.name===lcSel))lcSel=items[0]?.name||null;
+  $("lc-list").innerHTML=items.map(a=>{const c=convFor(d,a.name);return `<div class="lc-item ${a.name===lcSel?"on":""}" onclick="selActor('${a.name}')"><div><div class="nm">${esc(a.name)}</div><div class="who">${esc(c?.displayName||c?.peer||"未关联会话")}${c?" · "+esc(c.channel):""}</div></div><span class="badge ${a.status}">${a.status}</span></div>`}).join("")||'<span class="small">暂无 Actor</span>';
+  if(!lcSel){$("lc-main").innerHTML="";return;}
+  const cyc=buildCycles(d,lcSel);
+  const rs=cyc.map(c=>c.restore?.total*1000||((c.resumeAt&&c.activeAt)?c.activeAt-c.resumeAt:null)).filter(x=>x!=null);
+  const fbs=cyc.flatMap(c=>c.turns.map(t=>t.fb)).filter(Boolean);
+  const cks=cyc.map(c=>c.ckpt?.total*1000||((c.suspendingAt&&c.suspendAt)?c.suspendAt-c.suspendingAt:null)).filter(x=>x!=null);
+  const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  let h=`<div class="lc-sum"><div><div class="v">${cyc.length}</div><div class="l">生命周期（唤醒次数）</div></div><div><div class="v">${fmtS(avg(rs))}</div><div class="l">平均恢复（atelet）</div></div><div><div class="v">${fmtS(avg(fbs))}</div><div class="l">平均首字（含唤醒）</div></div><div><div class="v">${fmtS(avg(cks))}</div><div class="l">平均挂起</div></div></div>`;
+  h+=cyc.slice().reverse().map((c,i)=>{
+    const segs=cycleSegs(c,d);const tot=segs.reduce((x,s)=>x+s[1],0)||1;
+    const live=!c.suspendAt&&!c.crashAt;
+    const bar=segs.map(([k,ms])=>`<i class="seg-${k}" style="flex:${Math.max(ms/tot,0.02)}" title="${PH[k][0]} ${fmtS(ms)}">${ms/tot>0.08?PH[k][0]+" "+fmtS(ms):""}</i>`).join("");
+    const legend=segs.map(([k,ms])=>`<span style="--c:${PH[k][1]}">${PH[k][0]} <b>${fmtS(ms)}</b></span>`).join("");
+    const kind=c.restore?.kind?` · 快照来源 ${c.restore.kind==="local"?"节点本地":c.restore.kind==="golden"?"Golden":"GCS 下载"}`:"";
+    const t=c.turns;const turnInfo=t.length?` · ${t.length} 轮对话，首字 ${t.map(x=>fmtS(x.fb)).join(" / ")}`:"";
+    return `<div class="cyc ${live?"live":""}"><div class="cyc-hd"><b>#${cyc.length-i}</b><span>${clock(c.resumeAt||c.activeAt||0)}</span><span>${live?'<span class="badge RUNNING">进行中</span>':c.crashAt?'<span class="badge CRASHED">CRASHED</span>':""}</span><span>${kind}${turnInfo}</span></div>
+      <div class="gantt">${bar}</div><div class="cyc-legend">${legend}</div></div>`;
+  }).join("")||'<div class="small">还没有记录到这个 Actor 的唤醒（控制台重启后从头记录）。</div>';
+  const raw=(d.timeline||[]).filter(e=>e.actor===lcSel).slice(0,60);
+  h+=`<details class="lc-raw" ${lcRawOpen?"open":""} ontoggle="lcRawOpen=this.open"><summary>原始事件（${raw.length}）</summary><div class="tl">${raw.map(t=>`<div class="row"><span class="t">${clock(t.at)}</span><span class="k ${t.kind}">${esc(t.kind)}</span><span class="d">${esc(t.detail)}</span></div>`).join("")}</div></details>`;
+  $("lc-main").innerHTML=h;
+}
+
+function render(d){renderLifecycle(d);}
+async function refresh(){try{const d=await (await fetch("/api/state")).json();last=d;render(d);$("sync").textContent="● 已同步 "+clock(Date.now());$("sync").style.color="var(--green)";}catch(e){$("sync").textContent="● 连接中断，重试中…";$("sync").style.color="var(--red)"}}
+setInterval(refresh,2000);refresh();
+setInterval(()=>{if(last){last.now+=1000;render(last)}},1000);
+</script>
+</body>
+</html>

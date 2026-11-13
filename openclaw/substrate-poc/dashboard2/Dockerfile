@@ -7,7 +7,7 @@ RUN git clone --filter=blob:none https://github.com/agent-substrate/substrate.gi
 FROM node:24-bookworm-slim
 COPY --from=ate /out/kubectl-ate /usr/local/bin/kubectl-ate
 WORKDIR /app
-COPY dashboard2/server.mjs dashboard2/autoscaler.mjs dashboard2/console.html dashboard2/chat.html /app/
+COPY dashboard2/server.mjs dashboard2/autoscaler.mjs dashboard2/console.html dashboard2/chat.html dashboard2/lifecycle.html /app/
 USER 1000
 ENV PORT=8090
 EXPOSE 8090

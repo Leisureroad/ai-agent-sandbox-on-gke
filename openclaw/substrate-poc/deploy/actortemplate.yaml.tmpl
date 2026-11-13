@@ -33,6 +33,7 @@ containers:
     mountPath: /run/ate
   - name: workspace
     mountPath: /home/node/.openclaw/workspace
+${EXTRA_MOUNTS}
 resources:
   limits:
     cpuMillicores: 1000

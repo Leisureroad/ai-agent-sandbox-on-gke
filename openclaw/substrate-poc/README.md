@@ -11,14 +11,20 @@ Code for the POC described in [`../substrate-poc-user-guide-zh.md`](../substrate
 
 Nothing project-specific is hard-coded. `deploy.sh` reads `PROJECT_ID`, `GCE_REGION`, `ARTIFACT_REGISTRY_REPOSITORY` and `NODE_GSA_NAME` from the env file (`ENV_FILE`, default `../../substrate-gke/.ate-dev-env.sh`). The Cloud Build configs use the build project's `$PROJECT_ID`, and `_REGION` / `_AR_REPO` can be overridden with substitutions.
 
-Quick start, after following sections 4–8 of the guide:
+Quick start, after following sections 4–8 of the guide. These commands use OpenClaw 2026.8.2 with a Filestore user-files volume:
 
 ```bash
 cd $WORK/openclaw-demo
-SUBS="_REGION=${GCE_REGION},_AR_REPO=${ARTIFACT_REGISTRY_REPOSITORY}"
-gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --substitutions=$SUBS --config build/cloudbuild-demo.yaml .
-gcloud builds submit --project $PROJECT_ID --region $GCE_REGION --substitutions=$SUBS --config build/cloudbuild-dashboard2.yaml .
-cd deploy && FEISHU_ENABLED=true STORAGE=local ./deploy.sh
+V8=ghcr.io/openclaw/openclaw@sha256:5d25165995041caa6a7175bec82b25ad98c44eb269bb42435da8e27ec06e6be4
+SUBS="_REGION=${GCE_REGION},_AR_REPO=${ARTIFACT_REGISTRY_REPOSITORY},_OPENCLAW_IMAGE=$V8"
+B="gcloud builds submit --project $PROJECT_ID --region $GCE_REGION"
+$B --substitutions=$SUBS,_TAG=demo-v8 --config build/cloudbuild-gateway.yaml .
+$B --substitutions=$SUBS,_TAG=demo-fs-v8,_RUN_AS_UID=0 --config build/cloudbuild-actor.yaml .
+$B --substitutions=$SUBS,_TAG=demo-v8,_RUN_AS_UID=1000 --config build/cloudbuild-actor.yaml .
+$B --substitutions=_REGION=${GCE_REGION},_AR_REPO=${ARTIFACT_REGISTRY_REPOSITORY} --config build/cloudbuild-dashboard2.yaml .
+cd deploy
+OPENCLAW_VERSION=2026.8.2 STORAGE=filestore VOLUMEPOOL_STORAGECLASS=substrate-volumepool-sc FEISHU_ENABLED=true ./deploy.sh
+TEMPLATE_ONLY=true OPENCLAW_VERSION=2026.8.2 STORAGE=local ./deploy.sh   # churn template
 ```
 
 Secrets (Gemini API key, gateway token, Feishu app credentials) are read from `$WORK/secrets/` and from Kubernetes Secrets. Never commit them.

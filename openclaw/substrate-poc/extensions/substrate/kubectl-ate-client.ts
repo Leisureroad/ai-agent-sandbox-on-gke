@@ -38,6 +38,9 @@ export function createKubectlAteClient(cfg: { binPath?: string; endpoint?: strin
   const globalArgs = [
     ...(endpoint ? ["--endpoint", endpoint] : []),
     ...(tokenFile ? ["--token-file", tokenFile] : []),
+    // Opt in to preview API features: actors from templates with external
+    // (Filestore VolumePool) volumes are rejected without it.
+    "--preview",
   ];
 
   const run = async (args: string[]): Promise<string> => {

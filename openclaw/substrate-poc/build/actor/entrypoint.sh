@@ -28,6 +28,6 @@ curl -sS -m 180 -o /dev/null http://127.0.0.1:80/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-OpenClaw-Session-Key: substrate-warmup" \
   -d '{"model":"openclaw","messages":[{"role":"user","content":"ping"}],"stream":false}' || true
-node -e 'require("http").createServer((q,s)=>{s.end("warm")}).listen(8079,"0.0.0.0")' &
+node /opt/wakeup.mjs &
 
 wait $OC

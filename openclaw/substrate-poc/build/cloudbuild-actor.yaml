@@ -1,6 +1,6 @@
 steps:
 - name: gcr.io/cloud-builders/docker
-  args: ["build", "-f", "build/actor.Dockerfile", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/openclaw-actor:${_TAG}", "."]
+  args: ["build", "--build-arg", "OPENCLAW_IMAGE=${_OPENCLAW_IMAGE}", "-f", "build/actor.Dockerfile", "--build-arg", "RUN_AS_UID=${_RUN_AS_UID}", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/openclaw-actor:${_TAG}", "."]
 images: ["${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/openclaw-actor:${_TAG}"]
 substitutions:
   # Image repo = ${_REGION}-docker.pkg.dev/<build project>/${_AR_REPO}; override with
@@ -8,3 +8,6 @@ substitutions:
   _REGION: us-central1
   _AR_REPO: ate-images
   _TAG: demo
+  _OPENCLAW_IMAGE: ghcr.io/openclaw/openclaw@sha256:55294524dac01370288fb4beb16714b60f75cec0e96e07e662054cf29900965a
+  # 1000 for the durableDir templates; 0 for the Filestore variant (tag demo-fs).
+  _RUN_AS_UID: "1000"

@@ -12,10 +12,17 @@ export ARTIFACT_REGISTRY_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-ate-images}
 export NODE_GSA_NAME="${NODE_GSA_NAME:-ate-gke-node}"
 export NODE_SA="${NODE_SA:-${NODE_GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com}"
 
+# OpenClaw version. 2026.11.2 is the default; any other version uses its own image
+# tags, templates and gateway state PVC (suffix -v<major>.<minor>, e.g. -v8 for
+# 2026.8.x), so versions never share a golden snapshot or gateway state.
+export OPENCLAW_VERSION="${OPENCLAW_VERSION:-2026.11.2}"
+if [ "$OPENCLAW_VERSION" = 2026.11.2 ]; then OC_SUFFIX=""; else OC_SUFFIX="-v$(echo "$OPENCLAW_VERSION" | cut -d. -f2)"; fi
+export OC_SUFFIX GATEWAY_PVC="openclaw-gateway-pvc${OC_SUFFIX}"
 REPO="${GCE_REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}"
 digest() { gcloud artifacts docker images describe "$1" --format='value(image_summary.digest)' 2>/dev/null; }
-export GATEWAY_IMAGE="${REPO}/openclaw-gateway@$(digest ${REPO}/openclaw-gateway:demo)"
-export ACTOR_IMAGE="${REPO}/openclaw-actor@$(digest ${REPO}/openclaw-actor:demo)"
+export GATEWAY_IMAGE="${REPO}/openclaw-gateway@$(digest ${REPO}/openclaw-gateway:demo${OC_SUFFIX})"
+export ACTOR_TAG="${ACTOR_TAG:-$([ "${STORAGE:-filestore}" = filestore ] && echo demo-fs || echo demo)${OC_SUFFIX}}"
+export ACTOR_IMAGE="${REPO}/openclaw-actor@$(digest ${REPO}/openclaw-actor:${ACTOR_TAG})"
 export DASHBOARD_IMAGE="${REPO}/openclaw-dashboard@$(digest ${REPO}/openclaw-dashboard:demo)"
 export WORKER_IMAGE="${WORKER_IMAGE:-ghcr.io/agent-substrate/substrate/ateworker-gvisor:v1.0.0}"
 export ENVOY_IMAGE="${ENVOY_IMAGE:-envoyproxy/envoy:v1.34-latest}"
@@ -28,19 +35,29 @@ export FEISHU_DOMAIN="${FEISHU_DOMAIN:-feishu}"
 # snapshotted with the actor). Template names differ because templates are immutable.
 export STORAGE="${STORAGE:-filestore}"
 if [ "$STORAGE" = filestore ]; then
-  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm-fs}"
-  export WORKSPACE_VOLUME='# Per-actor Filestore VolumePool share: provisioned on first resume,
+  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm-fs5${OC_SUFFIX}}"
+  export VOLUMEPOOL_STORAGECLASS="${VOLUMEPOOL_STORAGECLASS:-substrate-volumepool-sc}"
+  # OpenClaw's workspace needs a hard-link capable filesystem (atomic bootstrap /
+  # state publication), so it stays a Substrate durable dir. The user's files go
+  # to a per-actor Filestore VolumePool share mounted at /home/node/files and
+  # linked into the workspace as files/ (build/actor/wakeup.mjs).
+  export WORKSPACE_VOLUME="- name: workspace
+  durableDir: {}
+# Per-actor Filestore VolumePool share: provisioned on first resume,
 # attached/mounted on every resume, unmounted/detached on every suspend.
-- name: workspace
+- name: files
   external:
     template:
       capacityBytes: 2147483648
-      storageClassName: substrate-volumepool-sc'
+      storageClassName: ${VOLUMEPOOL_STORAGECLASS}"
+  export EXTRA_MOUNTS="  - name: files
+    mountPath: /home/node/files"
 else
-  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm}"
+  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm${OC_SUFFIX}}"
   export WORKSPACE_VOLUME='# Fallback: Substrate durable dir, captured in every snapshot.
 - name: workspace
   durableDir: {}'
+  export EXTRA_MOUNTS=""
 fi
 # ACP bindings route Feishu DMs to the per-conversation Substrate actors. An
 # explicit open_id binding is the documented form for ACP; the wildcard entry
@@ -54,6 +71,9 @@ print(json.dumps([{"type": "acp", "agentId": "main",
   "acp": {"backend": "substrate"}} for p in peers]))
 PY
 )"
+# Template for the dashboard's churn load test: local storage, so a churn run does
+# not provision a Filestore share per churn actor.
+export CHURN_TEMPLATE="${CHURN_TEMPLATE:-openclaw-agent-warm${OC_SUFFIX}}"
 export DASHBOARD_SOURCE_RANGES="${DASHBOARD_SOURCE_RANGES:-[\"0.0.0.0/0\"]}"
 KATE=(kubectl ate)
 
@@ -63,7 +83,7 @@ render() {
   python3 - "$1" << 'EOF'
 import os, re, sys
 keys = ["GATEWAY_IMAGE","ACTOR_IMAGE","DASHBOARD_IMAGE","WORKER_IMAGE","ENVOY_IMAGE","IDLE_TIMEOUT_SECONDS",
-        "GEMINI_API_KEY","GATEWAY_TOKEN","TEMPLATE_NAME","WORKSPACE_VOLUME","FEISHU_BINDINGS","FEISHU_ENABLED","FEISHU_DOMAIN","DASHBOARD_SOURCE_RANGES","CONFIG_HASH","NODE_SA"]
+        "GEMINI_API_KEY","GATEWAY_TOKEN","TEMPLATE_NAME","WORKSPACE_VOLUME","FEISHU_BINDINGS","FEISHU_ENABLED","FEISHU_DOMAIN","DASHBOARD_SOURCE_RANGES","CONFIG_HASH","NODE_SA","EXTRA_MOUNTS","OPENCLAW_VERSION","GATEWAY_PVC","CHURN_TEMPLATE"]
 s = open(sys.argv[1]).read()
 for k in keys:
     s = s.replace("${%s}" % k, os.environ.get(k, ""))
@@ -108,6 +128,10 @@ if ! "${KATE[@]}" get actor-template "$TEMPLATE_NAME" -a openclaw-demo >/dev/nul
   "${KATE[@]}" --preview create actor-template -f /tmp/openclaw-actortemplate.yaml
   rm -f /tmp/openclaw-actortemplate.yaml
 fi
+
+# TEMPLATE_ONLY=true: just make sure the ActorTemplate exists (e.g. an extra
+# template for churn) without touching the gateway or dashboard.
+if [ "${TEMPLATE_ONLY:-false}" = true ]; then echo "template ${TEMPLATE_NAME} ready"; exit 0; fi
 
 echo "== gateway / dashboard"
 export CONFIG_HASH="$(render "$HERE/gateway.yaml.tmpl" | sha256sum | cut -c1-12)"

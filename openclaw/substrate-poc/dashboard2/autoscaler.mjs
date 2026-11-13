@@ -156,15 +156,18 @@ export function createWorkerAutoscaler(opts) {
     }
   }
 
-  async function tick({ actors, workers, conversations }) {
+  async function tick({ actors, workers, conversations, extraWaiting = 0 }) {
     if (!cfg.enabled) return;
     try {
       await observeCluster();
       const activeStates = new Set(["RUNNING", "RESUMING", "SUSPENDING"]);
-      for (const a of actors) if (a.status === "RUNNING" && a.node && !a.name.startsWith("warmup-")) warmNodes.add(a.node);
-      const running = new Set(actors.filter((a) => activeStates.has(a.status) && !a.name.startsWith("warmup-")).map((a) => a.name));
+      // warmup-* actors are node warm-up probes: they never drive scaling. churn-*
+      // actors do (they are the load-test), via active + extraWaiting.
+      const synthetic = (n) => n.startsWith("warmup-");
+      for (const a of actors) if (a.status === "RUNNING" && a.node && !synthetic(a.name)) warmNodes.add(a.node);
+      const running = new Set(actors.filter((a) => activeStates.has(a.status) && !synthetic(a.name)).map((a) => a.name));
       st.active = running.size;
-      st.waiting = (conversations || []).filter((c) => c.inflight > 0 && c.actor && !running.has(c.actor)).length;
+      st.waiting = (conversations || []).filter((c) => c.inflight > 0 && c.actor && !running.has(c.actor)).length + Math.max(0, extraWaiting);
       const desired = Math.min(cfg.max, Math.max(cfg.min, st.active + st.waiting + cfg.spare));
       st.desired = desired;
       if (st.replicas == null) return;
