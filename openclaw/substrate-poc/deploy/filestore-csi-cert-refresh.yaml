@@ -1,0 +1,54 @@
+# Safety net: the Filestore CSI controller's Envoy serves a 24h PodCertificate to
+# ate-api-server. In this POC that certificate was observed to expire without being
+# rotated, which breaks every CreateVolume/DeleteVolume ("x509: certificate has
+# expired"). Restarting the controller every 12h guarantees a fresh certificate.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: csi-cert-refresh
+  namespace: gcp-filestore-csi-driver
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: csi-cert-refresh
+  namespace: gcp-filestore-csi-driver
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["gcp-filestore-csi-controller"]
+  verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: csi-cert-refresh
+  namespace: gcp-filestore-csi-driver
+subjects:
+- kind: ServiceAccount
+  name: csi-cert-refresh
+  namespace: gcp-filestore-csi-driver
+roleRef:
+  kind: Role
+  name: csi-cert-refresh
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: csi-cert-refresh
+  namespace: gcp-filestore-csi-driver
+spec:
+  schedule: "17 */12 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: csi-cert-refresh
+          restartPolicy: OnFailure
+          containers:
+          - name: restart
+            image: bitnami/kubectl:latest
+            command: ["kubectl", "-n", "gcp-filestore-csi-driver", "rollout", "restart", "deployment/gcp-filestore-csi-controller"]

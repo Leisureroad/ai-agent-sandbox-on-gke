@@ -1,5 +1,5 @@
 # Custom ComputeClass for the OpenClaw gVisor workers. GKE auto-creates and
-# autoscales the node pool (n2d-standard-4, three workers per node); this is the
+# autoscales the node pool (n2d-standard-8, up to seven workers per node); this is the
 # supported way to back a standby CapacityBuffer on a Standard cluster.
 apiVersion: cloud.google.com/v1
 kind: ComputeClass
@@ -7,7 +7,7 @@ metadata:
   name: openclaw-workers
 spec:
   priorities:
-  - machineType: n2d-standard-4
+  - machineType: n2d-standard-8
   nodePoolAutoCreation:
     enabled: true
   nodePoolConfig:

@@ -1,3 +1,7 @@
+# Base OpenClaw image, pinned by digest. Gateway and actor must use the SAME one.
+#   2026.11.2-slim: ghcr.io/openclaw/openclaw@sha256:55294524dac01370288fb4beb16714b60f75cec0e96e07e662054cf29900965a
+#   2026.8.2-slim:  ghcr.io/openclaw/openclaw@sha256:5d25165995041caa6a7175bec82b25ad98c44eb269bb42435da8e27ec06e6be4
+ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:55294524dac01370288fb4beb16714b60f75cec0e96e07e662054cf29900965a
 # Gateway image = stock OpenClaw (slim) + the compiled substrate plugin + kubectl-ate.
 #
 # OpenClaw's plugin installer requires compiled JS (dist/index.js). TypeScript
@@ -50,7 +54,7 @@ RUN npm install --omit=dev \
 # other. Bump both files together.
 #
 #   crane digest ghcr.io/openclaw/openclaw:2026.8.2-slim
-FROM ghcr.io/openclaw/openclaw@sha256:55294524dac01370288fb4beb16714b60f75cec0e96e07e662054cf29900965a
+FROM ${OPENCLAW_IMAGE}
 USER 0
 COPY --from=ate /out/kubectl-ate /usr/local/bin/kubectl-ate
 # Ship compiled dist + manifest + package.json + vendored @grpc; drop the .ts sources.

@@ -13,7 +13,7 @@ spec:
   sandboxClasses:
   - name: gvisor
   template:
-    # Workers run only on the autoscaled worker node pool (n2d-standard-4, three
+    # Workers run only on the autoscaled worker node pool (n2d-standard-8, up to seven
     # workers per node). Its taint ate.dev/sandboxClass=gvisor is tolerated by
     # gVisor worker pods by default.
     nodeSelector:
@@ -22,7 +22,8 @@ spec:
     # so "worker freed on suspend" is visible one-to-one in the dashboard.
     resources:
       limits:
-        cpu: "2"
+        # 4 CPUs: snapshot download + zstd decompression on resume is CPU-bound.
+        cpu: "4"
         memory: 4Gi
       requests:
         cpu: 500m

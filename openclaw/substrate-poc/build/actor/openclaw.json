@@ -1,14 +1,55 @@
 {
-  "cron": { "enabled": false },
+  "cron": {
+    "enabled": false
+  },
   "gateway": {
     "port": 80,
     "bind": "lan",
     "mode": "local",
-    "auth": { "mode": "token" },
-    "controlUi": { "enabled": false },
-    "http": { "endpoints": { "chatCompletions": { "enabled": true } } },
-    "trustedProxies": ["169.254.0.0/16"]
+    "auth": {
+      "mode": "token"
+    },
+    "controlUi": {
+      "enabled": false
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    },
+    "trustedProxies": [
+      "169.254.0.0/16"
+    ]
   },
-  "agents": { "defaults": { "model": "google/gemini-3-flash-preview" } },
-  "channels": {}
+  "agents": {
+    "defaults": {
+      "model": "google/gemini-3-flash-preview"
+    }
+  },
+  "channels": {},
+  "plugins": {
+    "allow": [
+      "google",
+      "memory-core",
+      "web-readability"
+    ],
+    "entries": {
+      "google": {
+        "config": {
+          "webSearch": {
+            "model": "gemini-3-flash-preview"
+          }
+        }
+      }
+    }
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "provider": "gemini"
+      }
+    }
+  }
 }

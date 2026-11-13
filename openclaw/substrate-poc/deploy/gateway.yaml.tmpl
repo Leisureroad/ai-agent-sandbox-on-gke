@@ -155,7 +155,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: openclaw-gateway-pvc
+  name: ${GATEWAY_PVC}
   namespace: openclaw
 spec:
   accessModes: ["ReadWriteOnce"]
@@ -196,8 +196,8 @@ spec:
           mkdir -p /home/node/state/.openclaw /home/node/state/.tmp
           chmod 700 /home/node/state/.tmp
           node /app/openclaw.mjs plugins install /app/extensions/substrate --force --accept-capabilities || true
-          [ -d /home/node/state/.openclaw/extensions/feishu ] || node /app/openclaw.mjs plugins install @openclaw/feishu@2026.11.2 --accept-capabilities || \
-            node /app/openclaw.mjs plugins install clawhub:@openclaw/feishu@2026.11.2 --accept-capabilities || true
+          [ -d /home/node/state/.openclaw/extensions/feishu ] || node /app/openclaw.mjs plugins install @openclaw/feishu@${OPENCLAW_VERSION} --accept-capabilities || \
+            node /app/openclaw.mjs plugins install clawhub:@openclaw/feishu@${OPENCLAW_VERSION} --accept-capabilities || true
           cp /config/openclaw.json /home/node/state/.openclaw/openclaw.json
           node /app/openclaw.mjs plugins install /app/extensions/substrate --force --accept-capabilities
           node /app/openclaw.mjs doctor --fix || true
@@ -271,7 +271,7 @@ spec:
         - { name: router-client, mountPath: /run/router-client, readOnly: true }
       volumes:
       - name: openclaw-home
-        persistentVolumeClaim: { claimName: openclaw-gateway-pvc }
+        persistentVolumeClaim: { claimName: ${GATEWAY_PVC} }
       - name: tmp-volume
         emptyDir: {}
       - name: cache-volume
