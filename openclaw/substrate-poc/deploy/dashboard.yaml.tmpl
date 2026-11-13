@@ -48,7 +48,11 @@ rules:
   verbs: ["get", "list", "patch"]
 - apiGroups: ["autoscaling.x-k8s.io"]
   resources: ["capacitybuffers"]
-  verbs: ["get", "list"]
+  verbs: ["get", "list", "patch"]
+# Dashboard-set autoscaler limits (min / max / spare) survive restarts here.
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -143,10 +147,11 @@ spec:
         - { name: WORKER_NAMESPACE, value: openclaw-workers }
         - { name: WORKER_POOL, value: openclaw }
         - { name: AUTOSCALE_MIN, value: "3" }
-        - { name: AUTOSCALE_MAX, value: "9" }
+        - { name: AUTOSCALE_MAX, value: "21" }
         - { name: AUTOSCALE_SPARE, value: "1" }
         - { name: AUTOSCALE_COOLDOWN_MS, value: "180000" }
         - { name: CAPACITY_BUFFER, value: openclaw-worker-standby }
+        - { name: ACTIVE_CAPACITY_BUFFER, value: openclaw-worker-active }
         resources:
           requests: { cpu: 100m, memory: 128Mi }
           limits: { memory: 512Mi }

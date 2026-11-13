@@ -99,6 +99,9 @@ td.ops{white-space:nowrap}.kpi .l.cond{text-transform:none;letter-spacing:0;font
 .fleet-lc{grid-template-columns:1fr;align-items:start}.fleet-lc.open{grid-template-columns:3fr 2fr}.fleet-lc .c-tl{display:none}.fleet-lc.open .c-tl{display:block}.fleet-lc .lc-main{max-height:620px}
 .fleet-lc .lc-sum{grid-template-columns:repeat(2,1fr)}
 .churn-status{font-size:11px;color:var(--cyan);margin:-4px 0 8px;min-height:0}.churn-status .ln{color:var(--muted)}
+.ctls{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.ctl-group{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:flex-end}
+.ctl-group>b{width:100%;font-size:11px;color:var(--muted);font-weight:600}.ctl{display:flex;flex-direction:column;gap:3px;font-size:11px}.ctl input{width:90px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px 6px;font:inherit}.ctl em{font-style:normal;color:var(--muted);font-size:10px;max-width:220px}
+.comp{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin-top:12px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;font-size:12px}.comp>b{font-size:11px;color:var(--muted)}.c-run{color:var(--green)}.c-act{color:var(--cyan)}.c-sb{color:var(--yellow)}
 .pager{display:flex;gap:6px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:11px;color:var(--muted)}
 .pager button.on{border-color:var(--green);color:var(--green)}.pager button:disabled{opacity:.35;cursor:default;border-color:var(--line);color:var(--text)}
 @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}}
@@ -270,6 +273,9 @@ function renderChurn(d){
   const head=c.running?`⚡ Churn 进行中：${c.count} 个 Actor / ${(d.workers||[]).length} 个 Worker · 剩余 ${c.secsLeft}s · 已完成 ${c.cycles} 个周期 · 拒绝重试 ${c.refused} 次${c.failed?` · 其他错误 ${c.failed}`:""} · Worker ${d.autoscaler?.readyReplicas??"?"}/${d.autoscaler?.replicas??"?"}（目标 ${d.autoscaler?.desired??"?"}）`:"";
   el.innerHTML=(head?`<div>${head}</div>`:"")+(c.log||[]).slice(0,c.running?2:1).map(l=>`<div class="ln">${clock(l.at)} ${esc(l.msg)}</div>`).join("");
 }
+async function postJSON(path,body){const r=await fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});const d=await r.json();if(!d.ok)alert(d.error||"失败");refresh();return d;}
+function saveAs(){postJSON("/api/autoscaler/config",{min:+$("as-min").value,max:+$("as-max").value,spare:+$("as-spare").value});}
+async function saveBuf(){await postJSON("/api/buffer",{kind:"active",replicas:+$("bf-active").value});await postJSON("/api/buffer",{kind:"standby",replicas:+$("bf-standby").value});}
 function render(d){
   const A=d.actors||[],W=d.workers||[];
   const cnt=s=>A.filter(a=>a.status===s).length;
@@ -331,18 +337,53 @@ function render(d){
     <div class="small">${esc(w.node)} · ${esc(w.state)}</div>
     <div style="margin-top:6px">${w.actor?`🟢 <span class="mono">${esc(w.actor)}</span> <span class="badge ${w.actorStatus}">${w.actorStatus}</span>`:'<span class="small">⚪ 空闲，可被任意 Actor 复用</span>'}</div></div>`).join("")||'<span class="small">无 Worker</span>';
   const as=d.autoscaler||{};
-  const b=as.buffer||{};
-  const bcond=(b.conditions||[]).map(c=>`${esc(c.type)}=${esc(c.status)}${c.reason?" ("+esc(c.reason)+")":""}`).join(" · ")||esc(b.error||"–");
+  const sb=as.buffer||{}, ab=as.activeBuffer||{};
+  const bc=b0=>(b0.conditions||[]).filter(c=>c.status==="True").map(c=>esc(c.type)).join(" · ")||esc(b0.error||"–");
+  const nodes=as.nodes||[];
+  const nStandby=nodes.filter(n=>n.standby&&n.suspended).length, nResumed=nodes.filter(n=>n.resumedAt||(n.standby&&!n.suspended)).length, nPrep=nodes.filter(n=>n.standby&&n.suspended&&!n.ready).length;
+  // Node composition: which worker nodes are carrying workers vs. held in reserve.
+  const wPer={};for(const w of (d.workers||[]))if(w.node)wPer[w.node]=(wPer[w.node]||0)+1;
+  const comp={running:[],resumed:[],suspended:[],preparing:[],idle:[]};
+  for(const n of nodes){const k=wPer[n.name]||0;
+    if(n.standby&&n.suspended)comp.suspended.push(n);
+    else if(k>0)((n.standby||n.resumedAt)?comp.resumed:comp.running).push(n);
+    else if(!n.ready)comp.preparing.push(n);
+    else comp.idle.push(n);}
+  const wTot=Object.values(wPer).reduce((a,b)=>a+b,0);
+  const nRun=nodes.filter(n=>n.ready&&!(n.standby&&n.suspended)).length, nPrep2=nodes.filter(n=>!n.ready&&!(n.standby&&n.suspended)).length;
+  const nm=n=>esc(n.name.slice(-4));
+  const compLine=`<div class="comp"><b>Worker 节点构成</b>
+    <span class="c-run">运行中 ${comp.running.length+comp.resumed.length} 台（承载 Worker ${wTot} 个${comp.resumed.length?`，其中 ${comp.resumed.length} 台由 standby 恢复`:""}）</span>
+    <span class="c-act">Active 预留 ${ab.specReplicas??0} 份${comp.idle.length?` · 空闲运行节点 ${comp.idle.length} 台（${comp.idle.map(nm).join(", ")}）`:""}</span>
+    <span class="c-sb">Standby 挂起 ${comp.suspended.length} 台${comp.suspended.length?`（${comp.suspended.map(nm).join(", ")}）`:""} · 准备中 ${comp.preparing.length} 台${comp.preparing.length?`（${comp.preparing.map(nm).join(", ")}）`:""}</span>
+    <span class="small">${[...comp.running,...comp.resumed].map(n=>`${nm(n)}: ${wPer[n.name]} Worker`).join(" · ")}</span></div>`;
+  const ctl=(id,label,val,lo,hi,hint)=>`<label class="ctl"><span>${label}</span><input type="number" id="${id}" value="${val}" min="${lo}" max="${hi}"><em>${hint}</em></label>`;
+  const editing=["as-min","as-max","as-spare","bf-active","bf-standby"].some(id=>document.activeElement&&document.activeElement.id===id);
+  if(!editing){
   $("autoscale").innerHTML=as.enabled===false?'<span class="small">未启用</span>':
-    `<div class="kpis" style="grid-template-columns:repeat(5,1fr)">
+    `<div class="kpis" style="grid-template-columns:repeat(6,1fr)">
       <div class="kpi"><div class="v">${as.active??"–"} + ${as.waiting??0}</div><div class="l">活跃会话 + 排队会话</div></div>
       <div class="kpi"><div class="v">${as.desired??"–"}</div><div class="l">目标 Worker 数（min ${as.min} / max ${as.max} / 预留 ${as.spare}）</div></div>
       <div class="kpi"><div class="v">${as.readyReplicas??"–"} / ${as.replicas??"–"}</div><div class="l">就绪 / 期望 Worker Pod</div></div>
-      <div class="kpi"><div class="v">${(as.nodes||[]).filter(n=>n.ready).length} / ${(as.nodes||[]).length}</div><div class="l">Worker 节点（就绪 / 总数）</div></div>
-      <div class="kpi"><div class="v" style="font-size:16px">${esc(b.strategy||"–").replace("buffer.gke.io/","")}</div><div class="l cond">Capacity Buffer：${bcond}</div></div>
+      <div class="kpi"><div class="v" style="color:var(--green)">${nRun}</div><div class="l cond">运行中的 GKE 节点（台）<br>Worker 节点共 ${nodes.length} · 挂起 ${nStandby}${nPrep2?` · 准备中 ${nPrep2}`:""}</div></div>
+      <div class="kpi"><div class="v">${ab.specReplicas??"–"}</div><div class="l cond">Active Buffer（运行中的预留容量，份）<br>${bc(ab)}</div></div>
+      <div class="kpi"><div class="v">${sb.specReplicas??"–"}</div><div class="l cond">Standby Buffer（挂起的预留容量，份）<br>挂起节点 ${nStandby} · 已恢复 ${nResumed} · ${bc(sb)}</div></div>
+    </div>
+    ${compLine}
+    <div class="ctls">
+      <div class="ctl-group"><b>Worker 扩缩容上下限</b>
+        ${ctl("as-min","最少 Worker",as.min,0,20,"0–20")}
+        ${ctl("as-max","最多 Worker",as.max,1,30,"1–30")}
+        ${ctl("as-spare","预留空闲 Worker",as.spare,0,10,"0–10，常驻热备")}
+        <button class="primary" onclick="saveAs()">应用</button></div>
+      <div class="ctl-group"><b>GKE Capacity Buffer（每份 = 1 个 Worker 的资源，7 份 ≈ 1 台 n2d-standard-8）</b>
+        ${ctl("bf-active","Active Buffer",ab.specReplicas??0,0,21,"节点保持运行，新 Worker 立即调度")}
+        ${ctl("bf-standby","Standby Buffer",sb.specReplicas??0,0,21,"节点挂起，约 20s 恢复，挂起时不计算力费")}
+        <button class="primary" onclick="saveBuf()">应用</button></div>
     </div>
     <div class="small" style="margin-top:8px">${as.lastAction?"最近动作："+esc(as.lastAction):""} ${as.lastError?'<span class="err">'+esc(as.lastError)+'</span>':""}</div>
-    <div class="small" style="margin-top:4px">${(as.nodes||[]).map(n=>{const w=(as.warmNodes||[]).includes(n.name);const ing=as.warming&&as.warming.node===n.name;return `<span class="mono">${esc(n.name.replace("gke-openclaw-demo-",""))}</span> ${n.ready?"🟢":"⏳"} ${ing?"⏳预热中 "+as.warming.elapsedSec+"s":w?"🔥已预热":"❄️冷节点"}`}).join(" · ")}</div>`;
+    <div class="small" style="margin-top:4px">${nodes.map(n=>{const w=(as.warmNodes||[]).includes(n.name);const ing=as.warming&&as.warming.node===n.name;const sbTag=n.standby?(n.suspended?" 💤standby 挂起":" ⏏️standby 已恢复"):(n.resumedAt?" ⏏️由 standby 恢复 "+new Date(n.resumedAt).toLocaleTimeString("zh-CN",{hour12:false}):"");return `<span class="mono">${esc(n.name.replace("gke-openclaw-demo-",""))}</span> ${n.ready?"🟢":"⏳"}${sbTag} ${ing?"⏳预热中 "+as.warming.elapsedSec+"s":w?"🔥已预热":"❄️冷节点"}`}).join(" · ")}</div>`;
+  }
 }
 async function refresh(){try{const d=await (await fetch("/api/state")).json();last=d;render(d)}catch(e){const y=$("sync");if(y){y.textContent="● 连接中断，重试中…";y.style.color="var(--red)"}}}
 setInterval(refresh,1500);refresh();

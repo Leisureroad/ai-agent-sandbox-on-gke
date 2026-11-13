@@ -40,3 +40,18 @@ spec:
   podTemplateRef:
     name: openclaw-worker-shape
   replicas: 7
+---
+# GKE active capacity buffer for the same worker shape. Unlike standby, the
+# placeholder pods keep nodes RUNNING with free room, so a new worker schedules
+# instantly (no node resume), at the cost of paying for that idle capacity.
+# Starts at 0; the dashboard adjusts both buffers at runtime.
+apiVersion: autoscaling.x-k8s.io/v1beta1
+kind: CapacityBuffer
+metadata:
+  name: openclaw-worker-active
+  namespace: openclaw-workers
+spec:
+  provisioningStrategy: buffer.x-k8s.io/active-capacity
+  podTemplateRef:
+    name: openclaw-worker-shape
+  replicas: 0

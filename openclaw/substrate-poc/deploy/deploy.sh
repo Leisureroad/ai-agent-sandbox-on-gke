@@ -35,7 +35,7 @@ export FEISHU_DOMAIN="${FEISHU_DOMAIN:-feishu}"
 # snapshotted with the actor). Template names differ because templates are immutable.
 export STORAGE="${STORAGE:-filestore}"
 if [ "$STORAGE" = filestore ]; then
-  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm-fs5${OC_SUFFIX}}"
+  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm-fs6${OC_SUFFIX}}"
   export VOLUMEPOOL_STORAGECLASS="${VOLUMEPOOL_STORAGECLASS:-substrate-volumepool-sc}"
   # OpenClaw's workspace needs a hard-link capable filesystem (atomic bootstrap /
   # state publication), so it stays a Substrate durable dir. The user's files go
@@ -53,7 +53,7 @@ if [ "$STORAGE" = filestore ]; then
   export EXTRA_MOUNTS="  - name: files
     mountPath: /home/node/files"
 else
-  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm${OC_SUFFIX}}"
+  export TEMPLATE_NAME="${TEMPLATE_NAME:-openclaw-agent-warm2${OC_SUFFIX}}"
   export WORKSPACE_VOLUME='# Fallback: Substrate durable dir, captured in every snapshot.
 - name: workspace
   durableDir: {}'
@@ -73,7 +73,7 @@ PY
 )"
 # Template for the dashboard's churn load test: local storage, so a churn run does
 # not provision a Filestore share per churn actor.
-export CHURN_TEMPLATE="${CHURN_TEMPLATE:-openclaw-agent-warm${OC_SUFFIX}}"
+export CHURN_TEMPLATE="${CHURN_TEMPLATE:-openclaw-agent-warm2${OC_SUFFIX}}"
 export DASHBOARD_SOURCE_RANGES="${DASHBOARD_SOURCE_RANGES:-[\"0.0.0.0/0\"]}"
 KATE=(kubectl ate)
 
@@ -95,7 +95,9 @@ echo "== worker compute class / standby capacity buffer"
 render "$HERE/computeclass.yaml.tmpl" | kubectl apply -f -
 kubectl create namespace openclaw-workers --dry-run=client -o yaml | kubectl apply -f -
 if [ "${CAPACITY_BUFFER_ENABLED:-true}" = true ]; then
-  kubectl apply -f "$HERE/capacitybuffer.yaml"
+  # Create-if-absent: buffer sizes are tuned at runtime from the dashboard, and a
+  # plain apply on every deploy would reset them.
+  kubectl create -f "$HERE/capacitybuffer.yaml" 2>&1 | grep -v AlreadyExists || true
 fi
 
 echo "== namespaces / secrets"

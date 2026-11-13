@@ -34,6 +34,22 @@
       "google",
       "memory-core",
       "web-readability"
-    ]
+    ],
+    "entries": {
+      "google": {
+        "config": {
+          "webSearch": {
+            "model": "gemini-3-flash-preview"
+          }
+        }
+      }
+    }
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "provider": "gemini"
+      }
+    }
   }
 }

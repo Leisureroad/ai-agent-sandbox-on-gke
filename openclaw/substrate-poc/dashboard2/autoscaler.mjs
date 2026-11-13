@@ -29,6 +29,7 @@ export function createWorkerAutoscaler(opts) {
     spare: Number(opts.spare ?? 1),
     scaleDownCooldownMs: Number(opts.scaleDownCooldownMs ?? 180000),
     buffer: opts.buffer || "openclaw-worker-standby",
+    activeBuffer: opts.activeBuffer || "openclaw-worker-active",
     enabled: opts.enabled !== false,
     warmup: opts.warmup !== false,
     warmupMaxAttempts: 3,
@@ -42,6 +43,8 @@ export function createWorkerAutoscaler(opts) {
   const warmNodes = new Set();
   const warmAttempts = new Map();
   let warming = null; // { node, actor, startedAt }
+  const standbySeen = new Set();
+  const resumedAt = {}; // node -> ISO time it was resumed from standby
   const st = {
     replicas: null,
     readyReplicas: null,
@@ -87,23 +90,48 @@ export function createWorkerAutoscaler(opts) {
     st.replicas = scale.spec?.replicas ?? null;
     const wp = await k8s("GET", `/apis/ate.dev/v1/namespaces/${cfg.namespace}/workerpools/${cfg.pool}`);
     st.readyReplicas = wp.status?.readyReplicas ?? 0;
-    try {
-      const b = await k8s("GET", `/apis/autoscaling.x-k8s.io/v1beta1/namespaces/${cfg.namespace}/capacitybuffers/${cfg.buffer}`);
-      st.buffer = {
-        strategy: b.spec?.provisioningStrategy,
-        replicas: b.status?.replicas ?? b.spec?.replicas,
-        conditions: (b.status?.conditions || []).map((c) => ({ type: c.type, status: c.status, reason: c.reason, message: c.message })),
-      };
-    } catch (e) {
-      st.buffer = { error: String(e.message || e).slice(0, 200) };
-    }
+    const readBuffer = async (name) => {
+      try {
+        const b = await k8s("GET", `/apis/autoscaling.x-k8s.io/v1beta1/namespaces/${cfg.namespace}/capacitybuffers/${name}`);
+        return {
+          name,
+          strategy: b.spec?.provisioningStrategy || "buffer.x-k8s.io/active-capacity",
+          specReplicas: b.spec?.replicas ?? 0,
+          replicas: b.status?.replicas ?? b.spec?.replicas,
+          conditions: (b.status?.conditions || []).map((c) => ({ type: c.type, status: c.status, reason: c.reason, message: c.message })),
+        };
+      } catch (e) {
+        return { name, error: String(e.message || e).slice(0, 200) };
+      }
+    };
+    st.buffer = await readBuffer(cfg.buffer);
+    st.activeBuffer = await readBuffer(cfg.activeBuffer);
     try {
       const nodes = await k8s("GET", `/api/v1/nodes?labelSelector=${encodeURIComponent("cloud.google.com/compute-class=openclaw-workers")}`);
       st.nodes = (nodes.items || []).map((n) => ({
         name: n.metadata.name,
         ready: (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True"),
+        // GKE standby-capacity nodes carry these taints; suspended ones cost no compute.
+        standby: (n.spec?.taints || []).some((t) => t.key === "buffer.gke.io/standby-capacity-node"),
+        suspended: (n.spec?.taints || []).some((t) => t.key === "buffer.gke.io/standby-capacity-node-suspended"),
         created: n.metadata.creationTimestamp,
       }));
+      // GKE strips the standby taints when it resumes a standby node, so remember which
+      // nodes were standby and record the moment they turn into ordinary nodes.
+      let dirty = false;
+      const names = new Set(st.nodes.map((n) => n.name));
+      for (const n of st.nodes) {
+        if (n.standby) { standbySeen.add(n.name); continue; }
+        if (standbySeen.has(n.name) && !resumedAt[n.name]) {
+          resumedAt[n.name] = new Date().toISOString();
+          dirty = true;
+          event("standby-resume", `Standby 节点 ${shortNode(n.name)} 已被恢复，承接 Pending 的 Worker`);
+        }
+      }
+      for (const k of Object.keys(resumedAt)) if (!names.has(k)) { delete resumedAt[k]; dirty = true; }
+      for (const k of [...standbySeen]) if (!names.has(k)) standbySeen.delete(k);
+      for (const n of st.nodes) n.resumedAt = resumedAt[n.name] || null;
+      if (dirty) k8s("PATCH", CM, { data: { resumedNodes: JSON.stringify(resumedAt) } }).catch(() => {});
     } catch (e) {
       st.nodes = [];
     }
@@ -204,7 +232,42 @@ export function createWorkerAutoscaler(opts) {
     }
   }
 
+  // ---- runtime configuration from the dashboard (persisted in a ConfigMap) ----
+  const CM = `/api/v1/namespaces/${cfg.namespace}/configmaps/openclaw-autoscaler-config`;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v))));
+  async function loadConfig() {
+    try {
+      const cm = await k8s("GET", CM);
+      const d = cm.data || {};
+      if (d.min != null) cfg.min = clamp(d.min, 0, 20);
+      if (d.max != null) cfg.max = clamp(d.max, cfg.min, 30);
+      if (d.spare != null) cfg.spare = clamp(d.spare, 0, 10);
+      if (d.resumedNodes) Object.assign(resumedAt, JSON.parse(d.resumedNodes));
+    } catch {}
+  }
+  async function setConfig({ min, max, spare }) {
+    if (min != null) cfg.min = clamp(min, 0, 20);
+    if (max != null) cfg.max = clamp(max, Math.max(1, cfg.min), 30);
+    if (cfg.max < cfg.min) cfg.max = cfg.min;
+    if (spare != null) cfg.spare = clamp(spare, 0, 10);
+    const data = { min: String(cfg.min), max: String(cfg.max), spare: String(cfg.spare) };
+    try { await k8s("PATCH", CM, { data }); }
+    catch { await k8s("POST", `/api/v1/namespaces/${cfg.namespace}/configmaps`, { metadata: { name: "openclaw-autoscaler-config" }, data }, "application/json"); }
+    event("config", `Worker min ${cfg.min} / max ${cfg.max} / 预留空闲 ${cfg.spare}`);
+    return data;
+  }
+  async function setBuffer(kind, replicas) {
+    const name = kind === "active" ? cfg.activeBuffer : cfg.buffer;
+    const n = clamp(replicas, 0, 21);
+    await k8s("PATCH", `/apis/autoscaling.x-k8s.io/v1beta1/namespaces/${cfg.namespace}/capacitybuffers/${name}`, { spec: { replicas: n } });
+    event("buffer", `${kind === "active" ? "Active" : "Standby"} Capacity Buffer ${name} → ${n} 份（每份 = 1 个 Worker 的资源）`);
+    return { name, replicas: n };
+  }
+  loadConfig();
+
   return {
+    setConfig,
+    setBuffer,
     tick,
     state: () => ({
       ...cfg,

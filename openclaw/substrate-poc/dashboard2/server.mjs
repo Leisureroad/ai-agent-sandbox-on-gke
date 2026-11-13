@@ -41,6 +41,7 @@ const autoscaler = createWorkerAutoscaler({
   spare: process.env.AUTOSCALE_SPARE,
   scaleDownCooldownMs: process.env.AUTOSCALE_COOLDOWN_MS,
   buffer: process.env.CAPACITY_BUFFER,
+  activeBuffer: process.env.ACTIVE_CAPACITY_BUFFER,
   warmup: process.env.WARMUP !== "false",
   ate: (args, timeout) => ate(args, timeout),
   atespace: ATESPACE,
@@ -380,6 +381,15 @@ const server = http.createServer(async (req, res) => {
       const r = await action(kind, body);
       if (kind !== "logs") addTimeline(body.name || "*", "manual", `控制台手动操作：${kind}`);
       return json(200, { ok: true, out: r.stdout });
+    }
+    if (url.pathname === "/api/autoscaler/config" && req.method === "POST") {
+      try { return json(200, { ok: true, ...(await autoscaler.setConfig(await readBody(req))) }); }
+      catch (e) { return json(500, { ok: false, error: String(e?.message || e) }); }
+    }
+    if (url.pathname === "/api/buffer" && req.method === "POST") {
+      const b = await readBody(req);
+      try { return json(200, { ok: true, ...(await autoscaler.setBuffer(b.kind, b.replicas)) }); }
+      catch (e) { return json(500, { ok: false, error: String(e?.message || e) }); }
     }
     if (url.pathname === "/api/churn" && req.method === "POST") {
       try { return json(200, { ok: true, ...(await startChurn(await readBody(req))) }); }
