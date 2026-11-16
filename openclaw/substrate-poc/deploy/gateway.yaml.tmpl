@@ -256,7 +256,20 @@ spec:
         - { name: ate-api, mountPath: /var/run/ate, readOnly: true }
       - name: router-proxy
         image: ${ENVOY_IMAGE}
-        args: ["-c", "/config/envoy.yaml", "--log-level", "warn"]
+        # The router client certificate (podCertificate, 24h) is rotated by the kubelet,
+        # but Envoy's watched_directory does not reliably pick up the projected-volume
+        # swap: it kept the expired cert, every request then failed the mTLS handshake
+        # (503), and OpenClaw reported "The AI service is temporarily overloaded".
+        # Record the start time and let the liveness probe restart only this sidecar
+        # once a newer certificate shows up.
+        command: ["sh", "-c"]
+        args: ["touch /tmp/envoy-started && exec envoy -c /config/envoy.yaml --log-level warn"]
+        livenessProbe:
+          exec:
+            command: ["sh", "-c", "[ -z \"$(find -L /run/router-client/credential-bundle.pem -newer /tmp/envoy-started 2>/dev/null)\" ]"]
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          failureThreshold: 1
         env:
         - name: POD_IP
           valueFrom: { fieldRef: { fieldPath: status.podIP } }
