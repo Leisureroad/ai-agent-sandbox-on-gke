@@ -51,6 +51,25 @@ OpenClaw 被拆成两部分：
 
 这样，1000 个注册用户里只有正在说话的那部分会占用计算资源。Worker（运行沙箱的 Pod）数量只需要覆盖**并发活跃**用户数。
 
+### 1.3 能力归属：Substrate 内置 vs 网关插件实现
+
+方案里的各项能力并非都由 Substrate 提供。Substrate 是一个“低主张”的运行时，只负责沙箱的调度、快照与网络；**什么时候挂起、会话怎么路由、出错后怎么恢复**，由上层（本方案中是 OpenClaw 网关里的 `substrate` 插件）决定。
+
+| 能力 | 由谁提供 | 说明 |
+|---|---|---|
+| gVisor 沙箱、Worker 预热池（WorkerPool） | **Substrate 内置** | |
+| 内存 + 文件系统快照（suspend / resume / revert） | **Substrate 内置** | 通过 `SuspendActor` / `RevertActor` 等 API 或 `kubectl ate` 调用 |
+| **收到请求自动唤醒** | **Substrate 内置** | atenet-router 发现 actor 处于挂起状态时，分配 Worker、恢复快照、再转发请求（等待上限由 `--parked-request-budget` 控制） |
+| 出网默认拒绝、按 actor 的出网策略 | **Substrate 内置**（策略内容由插件下发） | |
+| **空闲自动挂起**（默认 30s） | **网关插件**（`idle-suspender.ts`） | Substrate v1.0 **没有**空闲超时 / TTL 配置，只提供挂起 API；官方文档的表述是“由用户或上层系统在 actor 空闲时请求挂起”。actor 在沙箱里没有 ateapi 凭证，不能自己挂起，所以由持有凭证、也最清楚会话活跃度的网关来做 |
+| 同步挂起（快照写入 GCS 才算完成） | **网关插件**（调用时加 `--mode=sync`） | Substrate 默认异步挂起，见 11.5 |
+| 会话 → actor 路由、新用户自动建 actor | **网关插件**（`actor-router.ts`、`reply_dispatch` 兜底） | 按飞书私聊 SenderId / 群 ID 哈希出 `conv-<hash>` |
+| actor 被删后自动重建、CRASHED 后自动 revert | **网关插件**（`acp-runtime.ts`、`actor-provisioner.ts`） | 见 14.1 第 10、13 条 |
+| Worker 扩缩容、节点预热、Churn | **控制台内置控制器**（`dashboard2/autoscaler.mjs`） | Substrate v1.0 的 WorkerPool 只暴露 `/scale`，没有内置 autoscaler |
+
+> [!NOTE]
+> `extensions/substrate` 插件源自 Substrate 官方示例仓库 [agent-substrate/always-on-agent](https://github.com/agent-substrate/always-on-agent)（OpenClaw on Agent Substrate），空闲挂起、会话路由、ACP 后端都来自该示例。本方案在其基础上做的修改见文末“附：与上游 always-on-agent 的差异”。
+
 ---
 
 ## 2. 架构
@@ -686,6 +705,7 @@ curl -s http://$IP/api/state | jq '.autoscaler | {active, waiting, desired, repl
 | 11 | 冷节点上的首个请求返回 504 | router 默认只让请求等待 5s（POC 中试过 90s 仍不够），而冷节点恢复需要约 47s | `atenet-router --parked-request-budget=180s`，并配合节点预热 |
 | 12 | 节点被回收后，用户收到 “The AI service is temporarily overloaded”，且记忆丢失 | 默认**异步挂起**，快照还在节点本地没上传，节点就被 GKE 回收；唤醒时找不到快照，actor 变为 `CRASHED`，router 返回 503 | 网关改用**同步挂起** `--mode=sync`，快照写入 GCS 后才算挂起完成 |
 | 13 | actor 运行中 Worker 被删除，之后一直报 503 | actor 进入 `CRASHED`，没有任何组件处理 | 网关收到 503 时先确认状态是 `CRASHED`，再自动 `RevertActor` 到最后一个已上传的快照，然后重发消息；空闲挂起器遇到 `CRASHED` 时停止重试 |
+| 14 | 网关运行约一天后，所有用户都秒回 “The AI service is temporarily overloaded”，沙箱根本没被唤醒 | 网关 Envoy sidecar 访问 router 的客户端证书（podCertificate）有效期 24h，kubelet 轮换后 Envoy 的 `watched_directory` 没有加载新证书，仍用过期证书，mTLS 握手失败返回 503 | `router-proxy` 启动时记录时间戳，**livenessProbe** 发现证书文件比启动时间新就判失败，kubelet 只重启这个 sidecar（约 1s，网关和飞书连接不受影响） |
 
 ### 14.2 性能与弹性
 
@@ -777,6 +797,7 @@ POC 实测数据（gVisor，Gemini Flash 模型；Worker 节点起初为 n2d-sta
 | 飞书 @机器人 没反应 | `kubectl -n openclaw logs deploy/openclaw-gateway -c gateway \| grep feishu` | 没有任何 received 日志：检查权限、事件订阅（长连接 + `im.message.receive_v1`）和版本是否已发布；日志里有 `groupPolicy=disabled`：检查群聊配置 |
 | 回复 “Couldn't sign in to the AI service” | 网关日志中查看 `dispatching to agent` 的 session | 应该是 `acp:...` 形式。如果不是，确认插件版本包含自动路由兜底 |
 | 新用户回复为空，actor 日志有 `atomic bootstrap publication` | OpenClaw 2026.11 的工作区放在了 Filestore 上 | 使用代码包的 Filestore 布局（工作区本地、用户文件在 `files/`），或改用 2026.8.2 |
+| 所有用户都秒回 “The AI service is temporarily overloaded”，atelet 没有任何唤醒日志 | `kubectl -n openclaw exec deploy/openclaw-gateway -c gateway -- curl -s localhost:15000/certs \| grep expiration_time` | Envoy sidecar 仍在用已过期的 router 客户端证书（podCertificate 有效期 24h，Envoy 没有加载轮换后的新证书），mTLS 握手失败返回 503。代码包已为 `router-proxy` 加 livenessProbe：检测到新证书就只重启这个 sidecar。临时处理：`kubectl -n openclaw exec deploy/openclaw-gateway -c router-proxy -- kill 1` |
 | 智能体回复“搜索工具出现技术故障 / API 接口配置问题” | actor 日志中 web_search 返回 404 | 搜索模型不可用：把 actor 镜像 `openclaw.json` 中 `webSearch.model` 设为 `gemini-3-flash-preview`，重新构建镜像并创建新模板。配置打包在镜像和快照里，**已有 actor 不会生效**，需要删除后让网关按新模板重建（会丢失记忆） |
 | Standby / Active buffer 一直没被触发 | 控制台“Worker 节点构成”行 | Worker 上限太小，现有节点放得下全部 Worker，不会 Pending。把最多 Worker 调到 21 以上再压测（见 11.3） |
 | 创建 actor 报 `require the ExternalVolumes preview gate ... --preview` | 调用 kubectl-ate 没带 `--preview` | 代码包已内置；手动操作时用 `kubectl ate --preview ...` |
@@ -861,3 +882,27 @@ openclaw-demo/
     ├── computeclass.yaml.tmpl
     └── capacitybuffer.yaml
 ```
+
+### 附：与上游 always-on-agent 的差异
+
+`extensions/substrate` 插件和网关 / actor 拆分的部署思路来自官方示例 [agent-substrate/always-on-agent](https://github.com/agent-substrate/always-on-agent)（上游 WhatsApp demo，基于 Substrate release-0.1）。本方案适配 Substrate v1.0 和飞书多用户场景，做了以下修改：
+
+**网关插件 `extensions/substrate/`**
+
+| 文件 | 上游 | 本方案的修改 | 原因 |
+|---|---|---|---|
+| `idle-suspender.ts` | 空闲超时后调用挂起 | ① 增加 `onSuspendStart` / `onSuspendDone` 回调，记录挂起耗时供控制台“生命周期”面板使用；② actor 已删除（NotFound）或 `CRASHED` 时停止跟踪，不再反复重试 | 核心计时逻辑未改 |
+| `kubectl-ate-client.ts` | `kubectl-ate` 端口转发，release-0.1 的 `--template-ref` | ① 用网关 SA 的投射令牌 `--token-file` 鉴权；② 统一加 `--preview`（Filestore 外部卷是预览功能）；③ 创建 actor 后立即下发出网策略；④ 挂起改为 `--mode=sync`；⑤ 新增 `revertActor`（仅对 `CRASHED` 的 actor 回退）；⑥ 使用 v1.0 的 `--template` | v1.0 默认拒绝出网、默认异步挂起，见 11.5、14.1 |
+| `acp-runtime.ts` | 把对话转发给 actor | 收到 404 时清缓存、重建 actor 并重试一次；收到 503 时尝试 revert 并重试一次；接入 observer 上报对话事件 | 14.1 第 10、13 条 |
+| `actor-provisioner.ts` | 幂等创建（singleflight + 缓存） | 新增 `forget()`（清除“已存在”缓存）和 `revert()` | 配合上面的自愈 |
+| `ateapi-client.ts` | 客户端接口 | 接口增加可选的 `revertActor` | |
+| `index.ts` | ACP 后端、只处理显式绑定的会话 | ① `reply_dispatch` **自动路由兜底**：未绑定的飞书私聊 / 群聊自动路由到各自的 actor（`autoRouteChannels`，默认 `feishu`）；② 网页模拟用户对话接口；③ 启动 observer 服务（端口 18790） | ACP 绑定只匹配精确 peer id，见 14.1 第 7 条 |
+| `observer.ts` | 无 | 新增：会话、对话、挂起耗时的内存观测，供控制台读取 | |
+| `openclaw.plugin.json` | 插件配置 schema | 增加 `autoRouteChannels` 配置项 | |
+
+**镜像与部署**（上游没有或做法不同）
+
+- actor 镜像：预热 entrypoint（golden 快照包含已初始化的 agent 运行时）、`wakeup.mjs` 就绪探针、精简插件 `plugins.allow`、Gemini 联网搜索配置、Filestore 版 `RUN_AS_UID=0`。
+- 网关：新增 Envoy mTLS sidecar（v1.0 的 router 只接受 SPIFFE mTLS，见 14.1 第 2 条）及其证书轮换 livenessProbe（14.1 第 14 条）；飞书插件版本与 OpenClaw 版本自动对齐。
+- 部署：`deploy.sh` 一键部署、Filestore VolumePool 与 CSI 修补、`atenet-router --parked-request-budget=180s`、ComputeClass + Standby / Active CapacityBuffer。
+- 控制台 `dashboard2/`：扩缩容控制器、节点预热、Churn 压测、生命周期视图、buffer 在线调整，均为本方案新增。
